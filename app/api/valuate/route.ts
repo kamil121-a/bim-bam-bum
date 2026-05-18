@@ -1,155 +1,116 @@
 /**
- * Option A – ticker / ISIN → market price (zero AI, zero Stooq)
+ * Valuation endpoint – two modes:
  *
- * Data sources:
- *   Stocks (GPW/US/global) → Twelve Data  (TWELVE_DATA_API_KEY)
- *   ISIN lookup            → Twelve Data  /stocks endpoint
- *   Crypto                 → CoinGecko    (free, no key)
- *   Currency conversion    → NBP          (free, official PL source)
+ * Option A (ticker/ISIN/krypto/złoto):
+ *   Tavily Search → surowe wyniki → OpenAI gpt-4o-mini → unitPricePLN → × quantity
  *
- * Option B – description → Tavily + OpenAI (unchanged)
+ * Option B (opis / unikaty):
+ *   Tavily Search → OpenAI → szacunkowa wartość  (bez zmian)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import OpenAI from 'openai';
 import { createSupabaseServerClient } from '@/lib/supabase';
 import { estimateByDescription } from '@/lib/valuate';
 import type { ValuationResult } from '@/lib/valuate';
 
 export const maxDuration = 10;
 
-// ─── CoinGecko ID mapping ─────────────────────────────────────────────────────
+// ─── OpenAI client ────────────────────────────────────────────────────────────
 
-const CRYPTO_TO_CG: Record<string, string> = {
-  BTC:   'bitcoin',       ETH:   'ethereum',     SOL:   'solana',
-  XRP:   'ripple',        ADA:   'cardano',       DOGE:  'dogecoin',
-  BNB:   'binancecoin',   LTC:   'litecoin',      DOT:   'polkadot',
-  AVAX:  'avalanche-2',   LINK:  'chainlink',     ATOM:  'cosmos',
-  XLM:   'stellar',       NEAR:  'near',          UNI:   'uniswap',
-  MATIC: 'polygon',       SHIB:  'shiba-inu',     TON:   'toncoin',
-};
-
-// ─── Ticker classification ────────────────────────────────────────────────────
-
-type MarketKind = 'polish' | 'us' | 'crypto' | 'isin_pl' | 'isin_foreign';
-
-interface Classified {
-  kind:     MarketKind;
-  symbol:   string;   // cleaned ticker or raw ISIN
-  cgId?:    string;   // set only when kind === 'crypto'
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
 }
 
-function classify(raw: string): Classified {
-  const t = raw.trim().toUpperCase().replace(/\s+/g, '');
+// ─── Tavily search ────────────────────────────────────────────────────────────
 
-  // ISIN: exactly 12 chars, first two are alpha country code
-  if (/^[A-Z]{2}[A-Z0-9]{10}$/.test(t)) {
-    return { kind: t.startsWith('PL') ? 'isin_pl' : 'isin_foreign', symbol: t };
-  }
+interface TavilyResult { title: string; content: string; url: string }
 
-  // Known crypto
-  if (CRYPTO_TO_CG[t]) return { kind: 'crypto', symbol: t, cgId: CRYPTO_TO_CG[t] };
-
-  // XTB-style suffixes
-  if (t.endsWith('.PL')) return { kind: 'polish', symbol: t.slice(0, -3) };
-  if (t.endsWith('.US')) return { kind: 'us',     symbol: t.slice(0, -3) };
-
-  // Bare ticker → treat as US/global (Twelve Data resolves most majors)
-  return { kind: 'us', symbol: t };
-}
-
-// ─── Twelve Data helpers ──────────────────────────────────────────────────────
-
-/** Resolve ISIN → { symbol, exchange } via Twelve Data /stocks endpoint */
-async function resolveIsin(
-  isin:   string,
-  apiKey: string,
-): Promise<{ symbol: string; exchange: string } | null> {
-  try {
-    const url = `https://api.twelvedata.com/stocks?isin=${encodeURIComponent(isin)}&apikey=${apiKey}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(6_000) });
-    if (!res.ok) return null;
-
-    const data = await res.json() as { data?: { symbol: string; exchange: string }[] };
-    const hit  = data.data?.[0];
-    if (!hit) return null;
-
-    console.log(`[valuate] ISIN ${isin} → ${hit.symbol} (${hit.exchange})`);
-    return { symbol: hit.symbol, exchange: hit.exchange };
-  } catch {
+async function searchTavily(query: string): Promise<string | null> {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) {
+    console.warn('[tavily] TAVILY_API_KEY not set');
     return null;
   }
-}
 
-/** Fetch latest price from Twelve Data /price endpoint */
-async function fetchTwelvePrice(
-  symbol:   string,
-  exchange: string | null,
-  apiKey:   string,
-): Promise<number | null> {
   try {
-    const params = new URLSearchParams({ symbol, apikey: apiKey });
-    if (exchange) params.set('exchange', exchange);
-
-    const url = `https://api.twelvedata.com/price?${params.toString()}`;
-    console.log(`[TwelveData] GET ${url}`);
-
-    const res = await fetch(url, {
+    const res = await fetch('https://api.tavily.com/search', {
+      method:  'POST',
       signal:  AbortSignal.timeout(7_000),
-      headers: { Accept: 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key:        apiKey,
+        query,
+        search_depth:   'basic',
+        include_answer: false,
+        max_results:    5,
+      }),
     });
+
     if (!res.ok) {
-      console.warn(`[TwelveData] HTTP ${res.status}`);
+      console.warn('[tavily] HTTP', res.status, await res.text().catch(() => ''));
       return null;
     }
 
-    const data = await res.json() as { price?: string; status?: string; code?: number; message?: string };
+    const data    = await res.json() as { results?: TavilyResult[] };
+    const results = data.results ?? [];
 
-    if (data.status === 'error' || data.code || !data.price) {
-      console.warn('[TwelveData] Error:', data.message ?? 'no price field');
-      return null;
-    }
+    if (!results.length) return null;
 
-    const price = parseFloat(data.price);
-    if (!isFinite(price) || price <= 0) return null;
+    const context = results
+      .slice(0, 5)
+      .map((r, i) => `[${i + 1}] ${r.title}\n${r.content.slice(0, 400)}`)
+      .join('\n\n');
 
-    console.log(`[TwelveData] ${symbol}${exchange ? ':' + exchange : ''} = ${price}`);
-    return price;
+    console.log(`[tavily] ${results.length} wyników dla: "${query}"`);
+    return context;
+
   } catch (err) {
-    console.warn('[TwelveData] fetch error:', err instanceof Error ? err.message : err);
+    console.warn('[tavily] error:', err instanceof Error ? err.message : err);
     return null;
   }
 }
 
-// ─── CoinGecko helper ─────────────────────────────────────────────────────────
+// ─── OpenAI price extraction ──────────────────────────────────────────────────
 
-async function fetchCryptoPln(cgId: string): Promise<number | null> {
-  try {
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(cgId)}&vs_currencies=pln`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(7_000) });
-    if (!res.ok) return null;
-
-    const data  = await res.json() as Record<string, { pln?: number }>;
-    const price = data[cgId]?.pln;
-
-    if (!price || price <= 0) return null;
-
-    console.log(`[CoinGecko] ${cgId} = ${price} PLN`);
-    return price;
-  } catch {
-    return null;
-  }
+interface PriceJson {
+  success:      boolean;
+  unitPricePLN: number;
+  reasoning:    string;
 }
 
-// ─── NBP USD/PLN helper ───────────────────────────────────────────────────────
+async function extractPriceFromContext(ticker: string, context: string): Promise<PriceJson> {
+  const systemPrompt =
+    `Przeanalizuj poniższe wyniki wyszukiwania z internetu dla zapytania o aktywo: "${ticker}". ` +
+    `Znajdź aktualną cenę jednostkową tego aktywa wyrażoną w polskich złotych (PLN). ` +
+    `Jeśli cena w wynikach jest w USD lub EUR, przelicz ją na PLN na podstawie ` +
+    `informacji z tekstu lub ogólnego kursu rynkowego (rok 2026). ` +
+    `\n\nZwróć WYŁĄCZNIE czysty obiekt JSON (bez markdownu, bez \`\`\`json): ` +
+    `{ "success": true, "unitPricePLN": <liczba>, "reasoning": "<skrótowe źródło i cena>" }` +
+    `\n\nJeśli nie możesz ustalić ceny, zwróć: { "success": false, "unitPricePLN": 0, "reasoning": "Brak danych" }`;
 
-async function fetchUsdPln(): Promise<number> {
-  const res = await fetch(
-    'https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json',
-    { signal: AbortSignal.timeout(5_000) },
-  );
-  if (!res.ok) throw new Error(`NBP HTTP ${res.status}`);
-  const data = await res.json() as { rates: { mid: number }[] };
-  return data.rates[0].mid;
+  const completion = await getOpenAI().chat.completions.create({
+    model:           'gpt-4o-mini',
+    response_format: { type: 'json_object' },
+    temperature:     0.1,
+    max_tokens:      200,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user',   content: `Wyniki wyszukiwania:\n\n${context}` },
+    ],
+  });
+
+  const raw = completion.choices[0]?.message?.content ?? '{}';
+  console.log('[openai] price extraction response:', raw);
+
+  const parsed = JSON.parse(raw) as Partial<PriceJson>;
+  return {
+    success:      parsed.success      === true,
+    unitPricePLN: Number(parsed.unitPricePLN ?? 0),
+    reasoning:    String(parsed.reasoning    ?? ''),
+  };
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -170,114 +131,74 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Nieprawidłowe dane żądania.' }, { status: 400 });
   }
 
-  // ── Option B: opis / unikaty ──────────────────────────────────────────────────
+  // ── Option B: opis / unikaty (Tavily + OpenAI, osobna logika) ────────────────
   if (body.mode === 'description') {
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     if (description.length < 10) {
-      return NextResponse.json({ error: 'Opis jest za krótki (minimum 10 znaków).' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Opis jest za krótki (minimum 10 znaków).' },
+        { status: 400 },
+      );
     }
     return NextResponse.json(await estimateByDescription(description));
   }
 
-  // ── Option A: ticker / ISIN → cena rynkowa ───────────────────────────────────
-  const ticker   = typeof body.ticker   === 'string' ? body.ticker.trim().toUpperCase() : '';
+  // ── Option A: ticker → Tavily → OpenAI → PLN ─────────────────────────────────
+  const ticker   = typeof body.ticker   === 'string' ? body.ticker.trim() : '';
   const quantity = typeof body.quantity === 'number' && body.quantity > 0 ? body.quantity : 1;
 
   if (!ticker) {
     return NextResponse.json(
-      { success: false, error: 'Brak tickera. Wpisz symbol, np. AAPL.US, PKN.PL, BTC lub kod ISIN.' },
+      { success: false, error: 'Brak tickera. Wpisz symbol, np. AAPL.US, PKN.PL, BTC lub Złoto.' },
       { status: 400 },
     );
   }
 
-  console.log(`[valuate] Ticker: "${ticker}", qty: ${quantity}`);
+  const displayTicker = ticker.toUpperCase();
+  console.log(`[valuate] Opcja A – ticker: "${displayTicker}", qty: ${quantity}`);
 
   try {
-    const hit = classify(ticker);
-    console.log(`[valuate] Rozpoznano: kind=${hit.kind}, symbol=${hit.symbol}`);
+    // 1. Szukaj w sieci przez Tavily
+    const query   = `${displayTicker} aktualny kurs cena giełda w PLN 2026`;
+    const context = await searchTavily(query);
 
-    // ── Crypto (CoinGecko) ───────────────────────────────────────────────────
-    if (hit.kind === 'crypto') {
-      const pricePln = await fetchCryptoPln(hit.cgId!);
-      if (!pricePln) throw new Error('Nie znaleziono ceny kryptowaluty w CoinGecko.');
-
-      const total = Math.round(pricePln * quantity);
-      console.log(`Wykryto ticker: ${ticker} | Pobrana cena końcowa w PLN: ${pricePln}`);
-
-      return NextResponse.json({
-        estimatedValue:    total,
-        unitPrice:         Math.round(pricePln),
-        currency:          'PLN',
-        confidence:        'high',
-        source:            `CoinGecko (${hit.cgId})`,
-        suggestedCategory: 'Finanse',
-        aiCategory:        'Krypto',
-        reasoning:         `${ticker}: ${pricePln.toLocaleString('pl-PL')} PLN/szt.`,
-      } as ValuationResult);
+    if (!context) {
+      throw new Error('Tavily nie zwróciło żadnych wyników – sprawdź klucz API lub połączenie.');
     }
 
-    // ── Stocks & ISIN (Twelve Data) ──────────────────────────────────────────
-    const apiKey = process.env.TWELVE_DATA_API_KEY ?? '';
-    if (!apiKey) throw new Error('TWELVE_DATA_API_KEY nie jest skonfigurowany w zmiennych środowiskowych.');
+    // 2. Wyciągnij cenę jednostkową przez OpenAI
+    const priceData = await extractPriceFromContext(displayTicker, context);
 
-    let tdSymbol:   string      = hit.symbol;
-    let tdExchange: string|null = null;
-    let priceCurrency: 'PLN' | 'USD' =
-      (hit.kind === 'polish' || hit.kind === 'isin_pl') ? 'PLN' : 'USD';
-
-    // ISIN → resolve to symbol + exchange
-    if (hit.kind === 'isin_pl' || hit.kind === 'isin_foreign') {
-      const resolved = await resolveIsin(hit.symbol, apiKey);
-      if (!resolved) throw new Error(`Nie znaleziono spółki dla kodu ISIN: ${ticker}`);
-      tdSymbol   = resolved.symbol;
-      tdExchange = resolved.exchange;
+    if (!priceData.success || !priceData.unitPricePLN || priceData.unitPricePLN <= 0) {
+      throw new Error('Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś go poprawnie.');
     }
 
-    // Polish GPW: hint the exchange so Twelve Data picks the right listing
-    if (hit.kind === 'polish') tdExchange = 'WAW';
-
-    const rawPrice = await fetchTwelvePrice(tdSymbol, tdExchange, apiKey);
-    if (!rawPrice) throw new Error(`Nie znaleziono podanego symbolu (Sprawdź ticker XTB lub kod ISIN)`);
-
-    // Convert USD → PLN if needed
-    let unitPricePln: number;
-    let rateInfo = '';
-
-    if (priceCurrency === 'USD') {
-      const usdPln = await fetchUsdPln();
-      unitPricePln = rawPrice * usdPln;
-      rateInfo     = ` × ${usdPln.toFixed(4)} USD/PLN`;
-      console.log(`[valuate] Kurs USD/PLN (NBP): ${usdPln.toFixed(4)}`);
-    } else {
-      unitPricePln = rawPrice;
-    }
-
-    const finalPrice     = parseFloat(unitPricePln.toFixed(2));
-    const estimatedValue = Math.round(finalPrice * quantity);
+    // 3. Oblicz wartość łączną
+    const unitPrice      = parseFloat(priceData.unitPricePLN.toFixed(2));
+    const estimatedValue = Math.round(unitPrice * quantity);
 
     console.log(
-      `Wykryto ticker: ${ticker} | Cena ${priceCurrency}: ${rawPrice} |`,
-      `Pobrana cena końcowa w PLN: ${finalPrice} | Wartość łączna: ${estimatedValue}`,
+      `Wykryto ticker: ${displayTicker} |`,
+      `Pobrana cena końcowa w PLN: ${unitPrice} |`,
+      `Wartość łączna: ${estimatedValue}`,
     );
-
-    const sourceLabel = `${tdSymbol}${tdExchange ? ':' + tdExchange : ''}`;
 
     return NextResponse.json({
       estimatedValue,
-      unitPrice:         finalPrice,
+      unitPrice,
       currency:          'PLN',
-      confidence:        'high',
-      source:            `Twelve Data (${sourceLabel})${priceCurrency === 'USD' ? ' + NBP USD/PLN' : ''}`,
+      confidence:        'medium',
+      source:            `Tavily Search + GPT-4o-mini (${displayTicker})`,
       suggestedCategory: 'Finanse',
-      aiCategory:        hit.kind === 'isin_pl' || hit.kind === 'polish' ? 'Giełda' : 'Giełda',
-      reasoning:         `${ticker}: ${rawPrice} ${priceCurrency}${rateInfo} = ${finalPrice.toLocaleString('pl-PL')} PLN/szt. × ${quantity} szt.`,
+      aiCategory:        'Giełda',
+      reasoning:         priceData.reasoning,
     } as ValuationResult);
 
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Błąd pobierania ceny rynkowej.';
-    console.error(`[valuate] Błąd dla "${ticker}":`, msg);
+    const msg = err instanceof Error ? err.message : 'Nieznany błąd wyceny.';
+    console.error(`[valuate] Błąd dla "${displayTicker}":`, msg);
     return NextResponse.json(
-      { success: false, error: `Nie znaleziono podanego symbolu (Sprawdź ticker XTB lub kod ISIN)` },
+      { success: false, error: 'Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś go poprawnie.' },
       { status: 422 },
     );
   }
