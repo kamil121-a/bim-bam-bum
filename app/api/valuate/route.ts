@@ -73,6 +73,34 @@ async function searchTavily(query: string): Promise<string | null> {
   }
 }
 
+// ─── Tavily query optimizer ───────────────────────────────────────────────────
+
+function buildTavilyQuery(raw: string): string {
+  const t = raw.trim().toUpperCase();
+
+  // Polish GPW: KRUK.PL → notowania Bankier/Stooq po polsku
+  if (t.endsWith('.PL')) {
+    const name = t.slice(0, -3);
+    return `${name} notowania giełdowe kurs aktualny bankier stooq 2026`;
+  }
+
+  // US stocks: AAPL.US → English search for precision
+  if (t.endsWith('.US')) {
+    const name = t.slice(0, -3);
+    return `Google Finance ${name} stock price current USD 2026`;
+  }
+
+  // Crypto tickers (heuristic: short, no dot, known names)
+  const cryptoKeywords = ['BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOGE', 'BNB', 'LTC',
+    'DOT', 'AVAX', 'LINK', 'ATOM', 'XLM', 'NEAR', 'UNI', 'MATIC', 'SHIB', 'TON'];
+  if (cryptoKeywords.includes(t) || t.includes('COIN') || t.includes('CRYPTO')) {
+    return `CoinGecko ${t} price pln dzisiaj kurs 2026`;
+  }
+
+  // Everything else (Złoto, XAUUSD, custom names…)
+  return `${raw} aktualna cena rynkowa PLN 2026`;
+}
+
 // ─── OpenAI price extraction ──────────────────────────────────────────────────
 
 interface PriceJson {
@@ -83,13 +111,18 @@ interface PriceJson {
 
 async function extractPriceFromContext(ticker: string, context: string): Promise<PriceJson> {
   const systemPrompt =
-    `Przeanalizuj poniższe wyniki wyszukiwania z internetu dla zapytania o aktywo: "${ticker}". ` +
-    `Znajdź aktualną cenę jednostkową tego aktywa wyrażoną w polskich złotych (PLN). ` +
-    `Jeśli cena w wynikach jest w USD lub EUR, przelicz ją na PLN na podstawie ` +
-    `informacji z tekstu lub ogólnego kursu rynkowego (rok 2026). ` +
-    `\n\nZwróć WYŁĄCZNIE czysty obiekt JSON (bez markdownu, bez \`\`\`json): ` +
-    `{ "success": true, "unitPricePLN": <liczba>, "reasoning": "<skrótowe źródło i cena>" }` +
-    `\n\nJeśli nie możesz ustalić ceny, zwróć: { "success": false, "unitPricePLN": 0, "reasoning": "Brak danych" }`;
+    `Jesteś precyzyjnym botem finansowym. Przeanalizuj dostarczone wyniki wyszukiwania ` +
+    `z internetu dla aktywa: "${ticker}". ` +
+    `Twoim absolutnym priorytetem jest znalezienie NAJŚWIEŻSZEGO kursu ` +
+    `(najlepiej z dzisiejszą datą lub z ostatnich dni maja 2026 roku). ` +
+    `Ignoruj artykuły i prognozy sprzed wielu miesięcy. ` +
+    `Znajdź cyfrę oznaczającą aktualną cenę na portalach takich jak ` +
+    `Bankier, Stooq, BiznesRadar, Google Finance lub CoinGecko. ` +
+    `Jeśli cena jest w USD lub EUR, przelicz ją na PLN (kurs z tekstu lub rynkowy 2026). ` +
+    `\n\nZwróć WYŁĄCZNIE czysty JSON (bez markdownu, bez \`\`\`json):\n` +
+    `{ "success": true, "unitPricePLN": <liczba>, "reasoning": "<b. krótkie potwierdzenie źródła i ceny>" }` +
+    `\n\nJeśli nie możesz ustalić ceny, zwróć:\n` +
+    `{ "success": false, "unitPricePLN": 0, "reasoning": "Brak aktualnych danych" }`;
 
   const completion = await getOpenAI().chat.completions.create({
     model:           'gpt-4o-mini',
@@ -103,7 +136,7 @@ async function extractPriceFromContext(ticker: string, context: string): Promise
   });
 
   const raw = completion.choices[0]?.message?.content ?? '{}';
-  console.log('[openai] price extraction response:', raw);
+  console.log('Odpowiedź OpenAI JSON:', raw);
 
   const parsed = JSON.parse(raw) as Partial<PriceJson>;
   return {
@@ -158,9 +191,11 @@ export async function POST(request: NextRequest) {
   console.log(`[valuate] Opcja A – ticker: "${displayTicker}", qty: ${quantity}`);
 
   try {
-    // 1. Szukaj w sieci przez Tavily
-    const query   = `${displayTicker} aktualny kurs cena giełda w PLN 2026`;
-    const context = await searchTavily(query);
+    // 1. Zoptymalizuj zapytanie i szukaj w sieci przez Tavily
+    const optimizedQuery = buildTavilyQuery(ticker);
+    console.log('Wysłane zapytanie do Tavily:', optimizedQuery);
+
+    const context = await searchTavily(optimizedQuery);
 
     if (!context) {
       throw new Error('Tavily nie zwróciło żadnych wyników – sprawdź klucz API lub połączenie.');
