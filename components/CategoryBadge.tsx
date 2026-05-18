@@ -8,6 +8,7 @@ const CATEGORY_STYLES: Record<AssetCategory, string> = {
   Nieruchomości:               'bg-amber-500/20 text-amber-300 border border-amber-500/30',
   Pojazdy:                     'bg-sky-500/20 text-sky-300 border border-sky-500/30',
   Elektronika:                 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  Biżuteria:                   'bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30',
   'Przedmioty kolekcjonerskie':'bg-purple-500/20 text-purple-300 border border-purple-500/30',
   Inne:                        'bg-slate-600/50 text-slate-300 border border-slate-500/30',
 };
@@ -20,6 +21,7 @@ const CATEGORY_ICONS: Record<AssetCategory, string> = {
   Nieruchomości:               '🏠',
   Pojazdy:                     '🚗',
   Elektronika:                 '💻',
+  Biżuteria:                   '💎',
   'Przedmioty kolekcjonerskie':'🏆',
   Inne:                        '📦',
 };

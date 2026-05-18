@@ -18,6 +18,7 @@ ALTER TABLE public.assets
     'Nieruchomości',
     'Pojazdy',
     'Elektronika',
+    'Biżuteria',
     'Przedmioty kolekcjonerskie',
     'Inne'
   ));

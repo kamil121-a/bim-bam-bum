@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
-const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Przedmioty kolekcjonerskie', 'Inne'];
+const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
 
 function AssetSkeleton() {
   return (

@@ -33,8 +33,9 @@ export interface ValuationResult {
   aiCategory:          string;
   reasoning:           string;
   requiresManualPrice?: boolean;
-  // Real-estate extras
+  // Tiered pricing (real estate / vehicles): user picks low/mid/high vs market estimate
   isRealEstate?:       boolean;
+  isVehicle?:          boolean;
   pricePerM2?:         number;
   area?:               number;
   priceRange?:         { low: number; mid: number; high: number };
@@ -50,6 +51,7 @@ const AI_TO_DB: Record<string, AssetCategory> = {
   Elektronika:                  'Elektronika',
   Nieruchomości:                'Nieruchomości',
   Pojazdy:                      'Pojazdy',
+  Biżuteria:                    'Biżuteria',
   'Przedmioty kolekcjonerskie': 'Przedmioty kolekcjonerskie',
   Inne:                         'Inne',
 };
@@ -313,7 +315,7 @@ Zwróć WYŁĄCZNIE czysty JSON (zero tekstu poza JSON):
 {
   "type": "financial" | "physical",
   "asset_id": string | null,
-  "category": "Giełda" | "Krypto" | "Metale" | "Waluty" | "Elektronika" | "Nieruchomości" | "Inne"
+  "category": "Giełda" | "Krypto" | "Metale" | "Waluty" | "Elektronika" | "Nieruchomości" | "Pojazdy" | "Biżuteria" | "Przedmioty kolekcjonerskie" | "Inne"
 }
 
 ZASADY IDENTYFIKATORÓW (asset_id):
@@ -345,7 +347,10 @@ ZASADY IDENTYFIKATORÓW (asset_id):
 • NVIDIA         → "NVDA"
 • Meta           → "META"
 • Gotówka PLN    → "pln"
-• Fizyczne przedmioty (elektronika, samochód, meble, zegarek itp.) → type: "physical", asset_id: null
+• Samochód / motocykl (opis pojazdu, nie ticker giełdowy) → type: "physical", asset_id: null, category: "Pojazdy"
+• Zegarki (Rolex, Omega itp.), biżuteria – pierścionki, łańcuszki, bransolety → type: "physical", asset_id: null, category: "Biżuteria"
+• Monety kolekcjonerskie, medale, znaczki – bez zegarków → type: "physical", asset_id: null, category: "Przedmioty kolekcjonerskie"
+• Laptop, telefon, sprzęt RTV → type: "physical", asset_id: null, category: "Elektronika"
 
 ══════════════════════════════════════════════════════
 ZASADA SUFIKSU .WA – CZYTAJ UWAŻNIE:
@@ -404,7 +409,10 @@ PRZYKŁADY:
 "1000 PLN gotówka"    → {"type":"financial","asset_id":"pln","category":"Waluty"}
 "MacBook Pro M4"      → {"type":"physical","asset_id":null,"category":"Elektronika"}
 "mieszkanie 50m²"     → {"type":"physical","asset_id":null,"category":"Nieruchomości"}
-"Zegarek Rolex"       → {"type":"physical","asset_id":null,"category":"Inne"}`;
+"BMW 320d 2019"       → {"type":"physical","asset_id":null,"category":"Pojazdy"}
+"Zegarek Rolex"       → {"type":"physical","asset_id":null,"category":"Biżuteria"}
+"złoty pierścionek"   → {"type":"physical","asset_id":null,"category":"Biżuteria"}
+"moneta 2 zł 1995"    → {"type":"physical","asset_id":null,"category":"Przedmioty kolekcjonerskie"}`;
 
 async function classifyAsset(name: string, signal: AbortSignal): Promise<Classification> {
   const completion = await getOpenAI().chat.completions.create(
@@ -867,7 +875,7 @@ export async function estimateByDescription(description: string): Promise<Valuat
     // ── Step 2: Build OpenAI system prompt ────────────────────────────────────
     const jsonSchema = `{
   "value": <całkowita wartość PLN, integer, > 0>,
-  "category": "Elektronika" | "Nieruchomości" | "Pojazdy" | "Przedmioty kolekcjonerskie" | "Inne",
+  "category": "Elektronika" | "Nieruchomości" | "Pojazdy" | "Biżuteria" | "Przedmioty kolekcjonerskie" | "Inne",
   "reasoning": "<max 35 słów>",
   "pricePerM2": <integer, średnia cena za m² PLN – TYLKO gdy category="Nieruchomości", inaczej null>,
   "area": <integer, metraż m² – TYLKO gdy category="Nieruchomości" i podano w opisie, inaczej null>
@@ -886,8 +894,9 @@ Przeanalizuj realne dane z rynku, odrzuć anomalie i wyznacz realną cenę rynko
 KATEGORIE:
 - "Elektronika" – smartfony, laptopy, sprzęt RTV/AGD
 - "Nieruchomości" – mieszkania, domy, działki
-- "Pojazdy" – samochody, motocykle, pojazdy
-- "Przedmioty kolekcjonerskie" – monety, antyki, zegarki, numizmaty, rarytasy
+- "Pojazdy" – samochody osobowe, motocykle, przyczepy (nie akcje spółek motoryzacyjnych)
+- "Biżuteria" – zegarki (Rolex, Omega, Casio premium itp.), pierścionki, łańcuszki, bransolety, kolczyki ze złota/srebra/kamieni
+- "Przedmioty kolekcjonerskie" – monety (numizmaty), medale, znaczki, antyki kolekcjonerskie (NIE zegarki – te są Biżuteria)
 - "Inne" – wszystko pozostałe
 
 Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
@@ -899,8 +908,9 @@ value MUSI być > 0.`
 KATEGORIE:
 - "Elektronika" – smartfony, laptopy, sprzęt RTV/AGD
 - "Nieruchomości" – mieszkania, domy, działki
-- "Pojazdy" – samochody, motocykle, pojazdy
-- "Przedmioty kolekcjonerskie" – monety, antyki, zegarki kolekcjonerskie, numizmaty
+- "Pojazdy" – samochody, motocykle
+- "Biżuteria" – zegarki, biżuteria (złoto, srebro, kamienie)
+- "Przedmioty kolekcjonerskie" – monety kolekcjonerskie, medale, znaczki (bez zegarków)
 - "Inne" – wszystko pozostałe
 
 Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
@@ -944,11 +954,17 @@ Zasady: podaj realistyczną cenę z OLX/Allegro lub rynku wtórnego. value MUSI 
     }
 
     const isRealEstate = rawCategory === 'Nieruchomości';
+    const isVehicle    = rawCategory === 'Pojazdy';
     const pricePerM2   = isRealEstate && typeof parsed.pricePerM2 === 'number' && parsed.pricePerM2 > 0
                            ? Math.round(parsed.pricePerM2) : undefined;
     const area         = isRealEstate && typeof parsed.area === 'number' && parsed.area > 0
                            ? Math.round(parsed.area) : undefined;
-    const priceRange   = isRealEstate ? {
+    const priceRangeRE = isRealEstate ? {
+      low:  Math.round(value * 0.8),
+      mid:  value,
+      high: Math.round(value * 1.2),
+    } : undefined;
+    const priceRangeVeh = isVehicle ? {
       low:  Math.round(value * 0.8),
       mid:  value,
       high: Math.round(value * 1.2),
@@ -965,11 +981,15 @@ Zasady: podaj realistyczną cenę z OLX/Allegro lub rynku wtórnego. value MUSI 
       suggestedCategory: toDbCategory(rawCategory),
       aiCategory:        rawCategory,
       reasoning:         parsed.reasoning?.trim() ?? 'Szacunkowa wartość rynkowa wg AI.',
-      ...(isRealEstate && {
+      ...(isRealEstate && priceRangeRE && {
         isRealEstate: true,
-        priceRange,
+        priceRange:    priceRangeRE,
         ...(pricePerM2 !== undefined && { pricePerM2 }),
         ...(area !== undefined && { area }),
+      }),
+      ...(isVehicle && priceRangeVeh && {
+        isVehicle:  true,
+        priceRange: priceRangeVeh,
       }),
     };
 

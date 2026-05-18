@@ -37,8 +37,9 @@ interface ValuationResult {
   aiCategory:          string;
   reasoning:           string;
   requiresManualPrice?: boolean;
-  // Real estate
+  // Real estate / vehicle
   isRealEstate?:       boolean;
+  isVehicle?:          boolean;
   pricePerM2?:         number;
   area?:               number;
   priceRange?:         { low: number; mid: number; high: number };
@@ -76,6 +77,7 @@ const DESC_EXAMPLES = [
   'Stara moneta 2 złote z 1995 roku, stan menniczy, w oryginalnym etui kolekcjonerskim',
   'Mieszkanie w centrum Krakowa, 45m2, 4 piętro, wysoki standard wykończenia, balkon, garaż',
   'Zegarek Rolex Submariner rocznik 2020, stalowy, stan bardzo dobry, kompletny zestaw',
+  'BMW 320d xDrive 2019, 120 tys. km, pierwszy właściciel, serwis ASO',
   'iPhone 15 Pro 256GB, kolor tytanowy, używany 6 miesięcy, stan idealny, oryginalne opakowanie',
 ];
 
@@ -102,7 +104,7 @@ export default function AddAssetPage() {
   const [manualValue, setManualValue] = useState('');
   const [error,       setError]       = useState('');
 
-  // Real estate price variant: 'low' | 'mid' | 'high'
+  // Real estate / vehicle tiered price variant
   const [priceVariant, setPriceVariant] = useState<'low' | 'mid' | 'high'>('mid');
 
   // Market-mode state (ticker = XTB-style symbol, e.g. AAPL.US, PKN.PL, BTC)
@@ -264,7 +266,11 @@ export default function AddAssetPage() {
         setError('Podaj szacowaną wartość przedmiotu (musi być > 0 PLN).');
         return;
       }
-    } else if (isRealEstate && valuation.priceRange) {
+    } else if (
+      valuation.priceRange &&
+      !valuation.requiresManualPrice &&
+      (valuation.isRealEstate || valuation.isVehicle)
+    ) {
       saveValue = valuation.priceRange[priceVariant];
     } else {
       saveValue = valuation.estimatedValue;
@@ -347,14 +353,16 @@ export default function AddAssetPage() {
     mode === 'cash'    ? cashCurrency :
     mode === 'market'  ? ticker.trim().toUpperCase() :
     (description.slice(0, 70) + (description.length > 70 ? '…' : ''));
-  const isManual       = valuation?.requiresManualPrice === true;
-  const isRealEstate   = valuation?.isRealEstate === true && !!valuation?.priceRange;
-  const selectedRange  = isRealEstate ? (valuation!.priceRange![priceVariant]) : undefined;
-  const finalValue     = isManual
-                           ? (parseFloat(manualValue) || 0)
-                           : isRealEstate
-                             ? (selectedRange ?? valuation?.estimatedValue ?? 0)
-                             : (valuation?.estimatedValue ?? 0);
+  const isManual        = valuation?.requiresManualPrice === true;
+  const tieredPricing   = valuation?.priceRange &&
+    !valuation.requiresManualPrice &&
+    ((valuation.isRealEstate === true) || (valuation.isVehicle === true));
+  const selectedRange   = tieredPricing ? (valuation!.priceRange![priceVariant]) : undefined;
+  const finalValue      = isManual
+                            ? (parseFloat(manualValue) || 0)
+                            : tieredPricing
+                              ? (selectedRange ?? valuation?.estimatedValue ?? 0)
+                              : (valuation?.estimatedValue ?? 0);
   const showBreakdown = !isManual && valuation && valuation.unitPrice > 0 && displayQty !== 1;
 
   if (loading) {
@@ -697,8 +705,10 @@ export default function AddAssetPage() {
                       <>
                         <p className="text-sm text-slate-400 mb-1">
                           {mode === 'description'
-                            ? isRealEstate
-                              ? 'Wycena AI – wybierz poziom ceny'
+                            ? tieredPricing
+                              ? valuation?.isRealEstate
+                                ? 'Wycena AI – wybierz poziom ceny (nieruchomość)'
+                                : 'Wycena AI – wybierz poziom ceny (pojazd)'
                               : 'Wycena AI (wartość rynkowa)'
                             : mode === 'cash'
                               ? `Gotówka ${cashCurrency} → PLN (kurs NBP)`
@@ -727,12 +737,14 @@ export default function AddAssetPage() {
               <div className="px-8 py-6 space-y-5">
 
                 {/* ── Real estate price variant selector ── */}
-                {isRealEstate && valuation?.priceRange && (
+                {tieredPricing && valuation?.priceRange && (
                   <div>
                     <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Wybierz poziom ceny względem średniej rynkowej
+                      {valuation.isRealEstate
+                        ? 'Wybierz poziom ceny względem średniej rynkowej (nieruchomość)'
+                        : 'Wybierz poziom ceny względem średniej rynkowej (pojazd)'}
                     </label>
-                    {valuation.pricePerM2 && (
+                    {valuation.isRealEstate && valuation.pricePerM2 && (
                       <p className="text-xs text-slate-500 mb-3">
                         Średnia cena za m²:{' '}
                         <strong className="text-slate-300">
@@ -838,7 +850,7 @@ export default function AddAssetPage() {
                         <Lock className="w-3 h-3" />
                         {mode === 'market' ? 'Kwota z giełdy – nie można zmienić.' :
                          mode === 'cash'   ? 'Przeliczone z kursu NBP – nie można zmienić.' :
-                         isRealEstate      ? 'Wybierz wariant cenowy powyżej.' :
+                         tieredPricing     ? 'Wybierz wariant cenowy powyżej.' :
                                              'Wycena AI – kliknij "Od nowa" aby zmienić opis.'}
                       </p>
                     </>

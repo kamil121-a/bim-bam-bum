@@ -7,7 +7,8 @@ import Navigation from '@/components/Navigation';
 import { formatPLN } from '@/components/AssetCard';
 import CategoryBadge from '@/components/CategoryBadge';
 import type { AssetCategory } from '@/types';
-import { BarChart2, Users, RefreshCw } from 'lucide-react';
+import { ASSET_CATEGORIES } from '@/types';
+import { BarChart2, Users, RefreshCw, Coins, Crown } from 'lucide-react';
 
 interface UserData {
   id:           string;
@@ -30,16 +31,32 @@ interface SharedAsset {
   holders:  Holder[];
 }
 
-interface StatsData {
-  users:          UserData[];
-  sharedAssets:   SharedAsset[];
-  currentUserId:  string;
+interface CurrencyStatRow {
+  userId:   string;
+  username: string;
+  quantity: number;
+  valuePln: number;
 }
 
-const ALL_CATEGORIES: string[] = [
-  'Akcje', 'Kruszce', 'Gotówka', 'Finanse',
-  'Nieruchomości', 'Pojazdy', 'Elektronika', 'Przedmioty kolekcjonerskie', 'Inne',
-];
+interface CurrencyStat {
+  currency:      string;
+  maxQuantity:   CurrencyStatRow;
+  maxValuePln:   CurrencyStatRow;
+  holders:       CurrencyStatRow[];
+}
+
+interface CategoryLeaderRow {
+  category: string;
+  leader:   { userId: string; username: string; totalPln: number } | null;
+}
+
+interface StatsData {
+  users:             UserData[];
+  sharedAssets:      SharedAsset[];
+  currencyStats?:    CurrencyStat[];
+  categoryLeaders?:  CategoryLeaderRow[];
+  currentUserId:     string;
+}
 
 export default function StatsPage() {
   const { user, loading } = useAuth();
@@ -80,11 +97,11 @@ export default function StatsPage() {
 
   if (!data) return null;
 
-  const { users, sharedAssets, currentUserId } = data;
+  const { users, sharedAssets, currencyStats = [], categoryLeaders = [], currentUserId } = data;
   const sortedUsers = [...users].sort((a, b) => b.total_wealth - a.total_wealth);
 
   // Categories present across all users
-  const presentCats = ALL_CATEGORIES.filter(cat =>
+  const presentCats = ASSET_CATEGORIES.filter(cat =>
     users.some(u => (u.categories[cat] ?? 0) > 0)
   );
 
@@ -161,6 +178,83 @@ export default function StatsPage() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </section>
+        )}
+
+        {/* ── Currency leaders ── */}
+        {currencyStats.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <Coins className="w-5 h-5 text-emerald-400" />
+              <h3 className="text-lg font-semibold text-slate-200">Gotówka – kto ma najwięcej</h3>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">
+              Porównanie według <strong className="text-slate-400">ilości</strong> danej waluty oraz{' '}
+              <strong className="text-slate-400">wartości w PLN</strong> (wg zapisanych aktywów „Gotówka”).
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {currencyStats.map(cs => (
+                <div
+                  key={cs.currency}
+                  className="bg-slate-800 rounded-2xl border border-slate-700/60 p-5 space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold text-slate-100">{cs.currency}</span>
+                    <span className="text-xs text-slate-500">{cs.holders.length} użytkowników</span>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3 py-2.5">
+                      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Największa ilość</p>
+                      <p className={`font-semibold ${cs.maxQuantity.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
+                        {cs.maxQuantity.username}
+                        {cs.maxQuantity.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
+                      </p>
+                      <p className="text-emerald-400 font-mono mt-0.5">
+                        {parseFloat(cs.maxQuantity.quantity.toFixed(4)).toLocaleString('pl-PL')} {cs.currency}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3 py-2.5">
+                      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Najwyższa wartość (PLN)</p>
+                      <p className={`font-semibold ${cs.maxValuePln.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
+                        {cs.maxValuePln.username}
+                        {cs.maxValuePln.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
+                      </p>
+                      <p className="text-indigo-400 font-bold mt-0.5">{formatPLN(cs.maxValuePln.valuePln)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── Category leaders ── */}
+        {categoryLeaders.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <Crown className="w-5 h-5 text-amber-400" />
+              <h3 className="text-lg font-semibold text-slate-200">Liderzy kategorii</h3>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">
+              Użytkownik z największą sumą wartości w każdej kategorii (wśród osób z wpisami &gt; 0).
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {categoryLeaders.map(({ category, leader }) => leader && (
+                <div
+                  key={category}
+                  className="flex items-center gap-3 bg-slate-800 rounded-xl border border-slate-700/60 px-4 py-3"
+                >
+                  <CategoryBadge category={category as AssetCategory} />
+                  <div className="min-w-0 flex-1">
+                    <p className={`font-semibold truncate ${leader.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
+                      {leader.username}
+                      {leader.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
+                    </p>
+                    <p className="text-sm font-bold text-emerald-400">{formatPLN(leader.totalPln)}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}

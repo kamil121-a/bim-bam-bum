@@ -6,6 +6,7 @@ export type AssetCategory =
   | 'Nieruchomości'
   | 'Pojazdy'
   | 'Elektronika'
+  | 'Biżuteria'
   | 'Przedmioty kolekcjonerskie'
   | 'Inne';
 
@@ -17,6 +18,7 @@ export const ASSET_CATEGORIES: AssetCategory[] = [
   'Nieruchomości',
   'Pojazdy',
   'Elektronika',
+  'Biżuteria',
   'Przedmioty kolekcjonerskie',
   'Inne',
 ];

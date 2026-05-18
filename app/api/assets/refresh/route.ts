@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
 
   // ── Wybierz zestaw aktywów do odświeżenia ────────────────────────────────────
   const MARKET_CATS = new Set(['Finanse', 'Akcje', 'Kruszce']);
-  const NON_MARKET_REFRESHABLE = new Set(['Nieruchomości', 'Pojazdy', 'Elektronika', 'Przedmioty kolekcjonerskie', 'Inne']);
+  const NON_MARKET_REFRESHABLE = new Set(['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne']);
 
   const targetAssets =
     refreshType === 'other'
