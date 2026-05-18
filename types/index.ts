@@ -12,6 +12,8 @@ export interface Asset {
   id: string;
   user_id: string;
   name: string;
+  /** Original AI-generated name; set once on creation, never overwritten. */
+  original_name: string | null;
   category: AssetCategory;
   value: number;
   quantity: number;

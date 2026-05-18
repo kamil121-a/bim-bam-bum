@@ -84,13 +84,15 @@ export async function POST(request: NextRequest) {
   const admin = createSupabaseAdminClient();
 
   const payload = {
-    id:        crypto.randomUUID(),
-    user_id:   user.id,
-    name:      name.trim(),
+    id:            crypto.randomUUID(),
+    user_id:       user.id,
+    name:          name.trim(),
+    // Preserved forever – user may rename the asset, but this stays as the AI-generated label
+    original_name: name.trim(),
     category,
-    value:     Math.round(value),
-    quantity:  parseFloat(quantity.toFixed(8)),
-    reasoning: reasoning?.trim() ?? null,
+    value:         Math.round(value),
+    quantity:      parseFloat(quantity.toFixed(8)),
+    reasoning:     reasoning?.trim() ?? null,
   };
 
   console.log('[POST /api/assets] Inserting:', { ...payload, user_id: '[redacted]' });

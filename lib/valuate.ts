@@ -264,7 +264,7 @@ ZASADY IDENTYFIKATORÓW (asset_id):
 • Chainlink      → "chainlink"
 • Toncoin        → "toncoin"
 • Shiba Inu      → "shiba-inu"
-• S&P 500 / SPY  → "SPY"          (ticker giełdowy dla Twelve Data)
+• S&P 500 / SPY  → "SPY"          (ticker Twelve Data)
 • NASDAQ / QQQ   → "QQQ"
 • Apple          → "AAPL"
 • Microsoft      → "MSFT"
@@ -273,16 +273,38 @@ ZASADY IDENTYFIKATORÓW (asset_id):
 • Tesla          → "TSLA"
 • NVIDIA         → "NVDA"
 • Meta           → "META"
-• Orlen / PKN    → "PKN.WA"
-• PKO BP         → "PKO.WA"
-• CD Projekt     → "CDR.WA"
-• Allegro        → "ALE.WA"
-• KGHM           → "KGH.WA"
-• PZU            → "PZU.WA"
-• Dino           → "DNO.WA"
-• LPP            → "LPP.WA"
 • Gotówka PLN    → "pln"
 • Fizyczne przedmioty (elektronika, samochód, meble, zegarek itp.) → type: "physical", asset_id: null
+
+══════════════════════════════════════════════════════
+KRYTYCZNA ZASADA – POLSKA GIEŁDA (GPW WARSZAWA):
+Jeśli użytkownik wpisuje JAKĄKOLWIEK polską spółkę notowaną na GPW,
+BEZWZGLĘDNIE dodaj sufiks .WA do tickera (cena jest już w PLN, nie USD).
+Dotyczy KAŻDEJ polskiej spółki – nawet tej spoza poniższej listy.
+Jeśli nie znasz dokładnego tickera, ZAWSZE zakończ go ".WA".
+
+Znane spółki GPW:
+• Orlen / PKN Orlen  → "PKN.WA"
+• PKO BP             → "PKO.WA"
+• CD Projekt         → "CDR.WA"
+• Allegro            → "ALE.WA"
+• KGHM               → "KGH.WA"
+• PZU                → "PZU.WA"
+• Dino               → "DNO.WA"
+• LPP                → "LPP.WA"
+• mBank              → "MBK.WA"
+• Cyfrowy Polsat     → "CPS.WA"
+• JSW                → "JSW.WA"
+• CCC                → "CCC.WA"
+• Santander PL       → "SPL.WA"
+• Pekao              → "PEO.WA"
+• Bank Millennium    → "MIL.WA"
+• Budimex            → "BDX.WA"
+• Eurocash           → "EUR.WA"
+• Kruk               → "KRU.WA"
+• Asseco              → "ACP.WA"
+• Lotos / MOL Polska → "PKN.WA"   (po fuzji z Orlenem)
+══════════════════════════════════════════════════════
 
 PRZYKŁADY:
 "10g złota"           → {"type":"financial","asset_id":"gold","category":"Metale"}
@@ -291,6 +313,9 @@ PRZYKŁADY:
 "S&P 500 ETF"         → {"type":"financial","asset_id":"SPY","category":"Giełda"}
 "Apple 3 akcje"       → {"type":"financial","asset_id":"AAPL","category":"Giełda"}
 "Orlen"               → {"type":"financial","asset_id":"PKN.WA","category":"Giełda"}
+"PKO BP 20 akcji"     → {"type":"financial","asset_id":"PKO.WA","category":"Giełda"}
+"Allegro"             → {"type":"financial","asset_id":"ALE.WA","category":"Giełda"}
+"mBank akcje"         → {"type":"financial","asset_id":"MBK.WA","category":"Giełda"}
 "1000 PLN gotówka"    → {"type":"financial","asset_id":"pln","category":"Waluty"}
 "MacBook Pro M4"      → {"type":"physical","asset_id":null,"category":"Elektronika"}
 "mieszkanie 50m²"     → {"type":"physical","asset_id":null,"category":"Nieruchomości"}

@@ -48,6 +48,23 @@ export default function DashboardPage() {
     setDeletingId(null);
   };
 
+  const handleEdit = useCallback(
+    async (id: string, changes: { name: string; quantity: number }) => {
+      const res = await fetch(`/api/assets/${id}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(changes),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((d as { error?: string }).error ?? `Błąd aktualizacji (HTTP ${res.status})`);
+      }
+      const updated = (d as { asset: typeof assets[0] }).asset;
+      setAssets(prev => prev.map(a => (a.id === id ? updated : a)));
+    },
+    [],
+  );
+
   const handleRefresh = async () => {
     setRefreshing(true);
     setRefreshMsg(null);
@@ -189,6 +206,7 @@ export default function DashboardPage() {
                       key={asset.id}
                       asset={asset}
                       onDelete={handleDelete}
+                      onEdit={handleEdit}
                       deleting={deletingId === asset.id}
                     />
                   ))}
