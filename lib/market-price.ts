@@ -148,51 +148,61 @@ export async function extractMarketPrice(
   context: string,
 ): Promise<MarketPriceResult | null> {
   const systemPrompt =
-    `Wyciągnij aktualną cenę aktywa "${ticker}" z dostarczonych wyników wyszukiwania. ` +
-    `Priorytetowo traktuj dane z Yahoo Finance (tickery z końcówką .WA lub czyste amerykańskie), ` +
-    `ale jeśli ich brakuje, użyj jakichkolwiek innych aktualnych danych finansowych ` +
-    `z roku 2026 zawartych w tekście.\n` +
-    `Zasady dotyczące waluty:\n` +
-    `- Cena w USD (giełda USA, krypto, kruszce) → "currency": "USD"\n` +
-    `- Cena w PLN (polskie spółki .WA) → "currency": "PLN"\n` +
-    `- Szukaj najświeższych danych (maj 2026). Ignoruj stare artykuły i prognozy.\n` +
-    `\nZwróć WYŁĄCZNIE czysty JSON (bez markdown, bez \`\`\`json):\n` +
-    `{ "currency": "USD", "price": <liczba>, "reasoning": "<krótkie źródło>" }\n` +
+    `Jesteś bezwzględnie precyzyjnym parserem danych finansowych. ` +
+    `Twoim jedynym zadaniem jest wyciągnięcie AKTUALNEJ CENY RYNKOWEJ ZA JEDNĄ SZTUKĘ ` +
+    `(Last Price / Current Price) dla aktywa: "${ticker}" ` +
+    `z dostarczonych wyników wyszukiwania dla maja 2026 roku.\n\n` +
+    `ŻELAZNE ZASADY selekcji danych:\n` +
+    `1. Szukaj wyłącznie aktualnego kursu (np. "912.40", "452.10").\n` +
+    `2. BEZWZGLĘDNIE IGNORUJ: kapitalizację rynkową (miliardy/tryliony), wolumen obrotu (Volume), ` +
+    `zmianę procentową (np. +1.5%), ceny docelowe analityków (Target Price) ` +
+    `oraz ceny historyczne sprzed miesięcy.\n` +
+    `3. Kontekst walutowy:\n` +
+    `   - Akcje USA (.US), krypto (BTC), kruszce (złoto/srebro) z ceną przy znaku '$' lub 'USD' → "currency": "USD"\n` +
+    `   - Polska spółka (.WA / .PL) z ceną przy 'zł' lub 'PLN' → "currency": "PLN"\n` +
+    `4. Jeśli nie ma jasnej, niepodważalnej aktualnej ceny giełdowej – ` +
+    `NIE ZGADUJ, nie halucynuj. Zwróć "success": false.\n\n` +
+    `Zwróć WYŁĄCZNIE surowy JSON (zero markdown, zero \`\`\`json):\n` +
+    `{ "success": true, "currency": "USD", "price": 912.40 }\n` +
     `lub gdy brak danych:\n` +
-    `{ "currency": "USD", "price": 0, "reasoning": "Brak danych" }`;
+    `{ "success": false, "currency": "USD", "price": 0 }`;
 
   try {
     const completion = await getMarketOpenAI().chat.completions.create({
       model:           'gpt-4o-mini',
       response_format: { type: 'json_object' },
-      temperature:     0.1,
-      max_tokens:      150,
+      temperature:     0.0,   // zero – deterministic extraction, no creativity
+      max_tokens:      120,
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user',   content: `Wyniki wyszukiwania Yahoo Finance:\n\n${context}` },
+        { role: 'user',   content: `Wyniki wyszukiwania:\n\n${context}` },
       ],
     });
 
     const raw = completion.choices[0]?.message?.content ?? '{}';
     console.log('Odpowiedź OpenAI JSON:', raw);
 
-    const parsed = JSON.parse(raw) as { currency?: string; price?: number; reasoning?: string };
-    const price  = Number(parsed.price ?? 0);
-    if (price <= 0) return null;
+    const parsed   = JSON.parse(raw) as { success?: boolean; currency?: string; price?: unknown };
+    const success  = parsed.success === true;
+    const price    = Number(parsed.price);   // explicit cast – guards against string prices
+    const currency = parsed.currency === 'PLN' ? 'PLN' : 'USD';
 
-    const currency  = parsed.currency === 'PLN' ? 'PLN' : 'USD';
-    const reasoning = String(parsed.reasoning ?? '');
-
-    // Convert USD → PLN using official NBP rate
-    if (currency === 'USD') {
-      const usdPln     = await fetchNbpUsdPln();
-      const pricePln   = price * usdPln;
-      console.log(`[NBP] ${price} USD × ${usdPln.toFixed(4)} = ${pricePln.toFixed(2)} PLN`);
-      return { unitPricePLN: pricePln, reasoning };
+    // Honour success flag – if AI found no clean price, refuse to guess
+    if (!success || !isFinite(price) || price <= 0) {
+      console.warn(`[extractMarketPrice] AI returned success=false or invalid price for "${ticker}"`);
+      return null;
     }
 
-    // Already PLN (Polish stocks on Yahoo Finance)
-    return { unitPricePLN: price, reasoning };
+    // Convert USD → PLN using official NBP rate (never rely on AI's exchange rate)
+    if (currency === 'USD') {
+      const usdPln   = await fetchNbpUsdPln();
+      const pricePln = price * usdPln;
+      console.log(`[NBP] ${price} USD × ${usdPln.toFixed(4)} = ${pricePln.toFixed(2)} PLN`);
+      return { unitPricePLN: pricePln, reasoning: `${ticker} @ ${price} USD (NBP: ${usdPln.toFixed(4)})` };
+    }
+
+    // PLN price – Polish stocks quoted directly on Yahoo Finance .WA
+    return { unitPricePLN: price, reasoning: `${ticker} @ ${price} PLN` };
 
   } catch (err) {
     console.error('[extractMarketPrice] error:', err instanceof Error ? err.message : err);
