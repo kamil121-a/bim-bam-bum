@@ -12,9 +12,19 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 /**
  * Browser client – use in Client Components and AuthContext.
  * Safe to call multiple times; returns a stable singleton per tab.
+ *
+ * detectSessionInUrl: false  – prevents the client from parsing session tokens
+ *   out of URL hash fragments (happens after OAuth). Without this flag, a stale
+ *   or malformed URL can corrupt the stored session and cause an auth loop.
  */
 export function createSupabaseBrowserClient() {
-  return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      detectSessionInUrl: false,
+      persistSession:     true,
+      autoRefreshToken:   true,
+    },
+  });
 }
 
 /**
