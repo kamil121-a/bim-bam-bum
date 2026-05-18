@@ -438,30 +438,118 @@ async function valuateFinancial(
   };
 }
 
+// ─── Tavily Web Search (real-time prices for physical/unique items) ───────────
+
+interface TavilyResult {
+  title:   string;
+  url:     string;
+  content: string;
+  score?:  number;
+}
+
+/**
+ * Searches the web via Tavily and returns a compact context string
+ * (up to 5 results, each trimmed to 350 chars) ready to inject into the LLM prompt.
+ *
+ * Returns null if the API key is missing, the request fails, or no results are found.
+ * Errors are swallowed so that the caller can fall back to bare OpenAI.
+ */
+async function searchTavily(query: string, signal: AbortSignal): Promise<string | null> {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) {
+    console.warn('[tavily] TAVILY_API_KEY not set – skipping web search');
+    return null;
+  }
+
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({
+        api_key:        apiKey,
+        query,
+        search_depth:   'basic',
+        include_answer: false,
+        max_results:    5,
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn('[tavily] HTTP error:', res.status, await res.text().catch(() => ''));
+      return null;
+    }
+
+    const data    = await res.json() as { results?: TavilyResult[] };
+    const results = data.results ?? [];
+
+    if (results.length === 0) {
+      console.log('[tavily] No results for query:', query);
+      return null;
+    }
+
+    const context = results
+      .slice(0, 5)
+      .map((r, i) =>
+        `[${i + 1}] ${r.title}\n${r.content.slice(0, 350)}`,
+      )
+      .join('\n\n');
+
+    console.log(`[tavily] ${results.length} wyników dla: "${query}"`);
+    return context;
+
+  } catch (err) {
+    // Absorb abort / network errors so the caller can fall back gracefully
+    if (err instanceof Error && err.name !== 'AbortError') {
+      console.warn('[tavily] Search error:', err.message);
+    }
+    return null;
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const HARD_TIMEOUT_MS = 8_000;
 
 /**
- * Option B – AI estimates total value from a free-text description.
- * Used for unique physical items, real estate, collectibles, etc.
- * AI receives the user's description and returns { value, category, reasoning }.
+ * Option B – Tavily-augmented AI valuation from a free-text description.
+ *
+ * Flow:
+ *   1. Tavily Web Search – fetches real listings/prices from the Polish internet
+ *      (Allegro, OLX, numismatic archives, real-estate portals, etc.)
+ *   2. OpenAI gpt-4o-mini – receives the web snippets as grounding context and
+ *      derives a realistic market value in PLN.
+ *   3. Fallback – if Tavily fails (rate-limit, network error), we fall back to
+ *      bare OpenAI with its training knowledge. The app never crashes.
  */
 export async function estimateByDescription(description: string): Promise<ValuationResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+  const timer      = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
 
   try {
-    const completion = await getOpenAI().chat.completions.create(
-      {
-        model:           'gpt-4o-mini',
-        response_format: { type: 'json_object' },
-        temperature:     0.3,
-        max_tokens:      200,
-        messages: [
-          {
-            role: 'system',
-            content: `Jesteś ekspertem wyceny aktywów na polskim rynku (rok 2026). Oceń wartość rynkową na podstawie opisu użytkownika — to jest realna cena, za którą można sprzedać ten przedmiot/nieruchomość w Polsce.
+    // ── Step 1: Web search for real-time market prices ─────────────────────────
+    const tavilyQuery = `${description} cena allegro olx aukcja kupię sprzedam`;
+    const webContext  = await searchTavily(tavilyQuery, controller.signal);
+
+    // ── Step 2: Build OpenAI system prompt ────────────────────────────────────
+    const systemPrompt = webContext
+      ? `Jesteś ekspertem rynkowym wyceniającym rzeczy na polskim rynku wtórnym (2026).
+Użytkownik chce wycenić: "${description}"
+
+Aby pomóc Ci w precyzyjnej wycenie, przeszukaliśmy polski internet i znaleźliśmy następujące aktualne oferty oraz archiwa aukcyjne:
+
+${webContext}
+
+Przeanalizuj powyższe realne dane z rynku:
+- Odrzuć skrajne anomalie cenowe (wyjątkowo tanie lub drogie oferty)
+- Wyznacz realny przedział cenowy dla tego konkretnego przedmiotu/egzemplarza
+- Oblicz kwotę możliwą do uzyskania przy normalnej sprzedaży
+
+Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
+{"value":<całkowita wartość PLN, integer, > 0>,"category":"Elektronika"|"Nieruchomości"|"Inne","reasoning":"<max 35 słów, np. 'Na podstawie znalezionych ofert cena waha się od X do Y zł. Przyjęto średnią Z zł.'>"}
+
+Value MUSI być > 0.`
+      : `Jesteś ekspertem wyceny aktywów na polskim rynku (rok 2026). Oceń wartość rynkową na podstawie opisu użytkownika — to jest realna cena, za którą można sprzedać ten przedmiot/nieruchomość w Polsce.
 
 Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
 {"value":<całkowita wartość PLN, integer, zawsze > 0>,"category":"Elektronika"|"Nieruchomości"|"Inne","reasoning":"<max 25 słów, krótkie uzasadnienie ceny>"}
@@ -470,15 +558,25 @@ Zasady wyceny:
 - Podaj realistyczną cenę rynkową (np. z OLX/Allegro dla przedmiotów, z rynku wtórnego dla nieruchomości)
 - Dla nieruchomości: uwzględnij lokalizację, metraż i standard
 - Dla przedmiotów kolekcjonerskich/unikatowych: oceń stan i rzadkość
-- Jeśli opis jest zbyt ogólny, podaj środek przedziału cenowego
-- Value MUSI być > 0`,
-          },
-          { role: 'user', content: description },
+- Value MUSI być > 0`;
+
+    // ── Step 3: Call OpenAI with (or without) web context ─────────────────────
+    const completion = await getOpenAI().chat.completions.create(
+      {
+        model:           'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        // Lower temperature when grounded with real data → more deterministic
+        temperature:     webContext ? 0.1 : 0.3,
+        max_tokens:      250,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: description },
         ],
       },
       { signal: controller.signal },
     );
 
+    // ── Step 4: Parse and validate response ───────────────────────────────────
     const raw    = completion.choices[0]?.message?.content ?? '{}';
     console.log('[valuate] estimateByDescription response:', raw);
     const parsed = JSON.parse(raw) as { value?: number; category?: string; reasoning?: string };
@@ -495,8 +593,11 @@ Zasady wyceny:
       estimatedValue:    value,
       unitPrice:         value,
       currency:          'PLN',
-      confidence:        'medium',
-      source:            'OpenAI gpt-4o-mini (wycena z opisu)',
+      // With real web data the estimate is much more reliable
+      confidence:        webContext ? 'high' : 'medium',
+      source:            webContext
+                           ? 'Tavily Web Search + OpenAI gpt-4o-mini'
+                           : 'OpenAI gpt-4o-mini (wycena z opisu)',
       suggestedCategory: toDbCategory(rawCategory),
       aiCategory:        rawCategory,
       reasoning:         parsed.reasoning?.trim() ?? 'Szacunkowa wartość rynkowa wg AI.',
