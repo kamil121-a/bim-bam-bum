@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
-import { createSupabaseServerClient } from '@/lib/supabase';
+import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
 import type { AssetCategory } from '@/types';
 
 export const maxDuration = 10;
@@ -25,9 +24,9 @@ export async function GET(request: NextRequest) {
   if (error) {
     console.error('[GET /api/assets] Supabase error:', {
       message: error.message,
-      code: error.code,
+      code:    error.code,
       details: error.details,
-      hint: error.hint,
+      hint:    error.hint,
     });
     return NextResponse.json({ error: 'Błąd pobierania aktywów.' }, { status: 500 });
   }
@@ -36,6 +35,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // ── 1. Validate session ──────────────────────────────────────────────────────
   const supabase = createSupabaseServerClient(request);
   const {
     data: { user },
@@ -43,14 +43,16 @@ export async function POST(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
+    console.warn('[POST /api/assets] Auth failed:', authError?.message ?? 'no user');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // ── 2. Parse body ────────────────────────────────────────────────────────────
   let body: {
-    name?: string;
-    category?: AssetCategory;
-    value?: number;
-    quantity?: number;
+    name?:      string;
+    category?:  AssetCategory;
+    value?:     number;
+    quantity?:  number;
     reasoning?: string;
   };
 
@@ -62,9 +64,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { name, category, reasoning } = body;
-
-  // Ensure value is a finite positive number
-  const value = Number(body.value);
+  const value    = Number(body.value);
   const quantity = Number(body.quantity) > 0 ? Number(body.quantity) : 1;
 
   if (!name?.trim()) {
@@ -74,23 +74,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Brak kategorii.' }, { status: 400 });
   }
   if (!isFinite(value) || value <= 0) {
-    return NextResponse.json({ error: 'Wartość musi być liczbą większą od 0.' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Wartość musi być liczbą większą od 0.' },
+      { status: 400 },
+    );
   }
 
+  // ── 3. Insert asset ──────────────────────────────────────────────────────────
+  const admin = createSupabaseAdminClient();
+
   const payload = {
-    id: uuidv4(),
-    user_id: user.id,
-    name: name.trim(),
+    id:        crypto.randomUUID(),
+    user_id:   user.id,
+    name:      name.trim(),
     category,
-    // Store as plain float – Math.round avoids floating-point noise
-    value: Math.round(value),
-    quantity: parseFloat(quantity.toFixed(8)), // preserve precision for crypto/metals
+    value:     Math.round(value),
+    quantity:  parseFloat(quantity.toFixed(8)),
     reasoning: reasoning?.trim() ?? null,
   };
 
   console.log('[POST /api/assets] Inserting:', { ...payload, user_id: '[redacted]' });
 
-  const { data: asset, error: insertError } = await supabase
+  const { data: asset, error: insertError } = await admin
     .from('assets')
     .insert(payload)
     .select()
@@ -99,14 +104,39 @@ export async function POST(request: NextRequest) {
   if (insertError) {
     console.error('[POST /api/assets] Supabase insert error:', {
       message: insertError.message,
-      code: insertError.code,
+      code:    insertError.code,
       details: insertError.details,
-      hint: insertError.hint,
+      hint:    insertError.hint,
     });
     return NextResponse.json(
       { error: `Błąd zapisu aktywa: ${insertError.message}` },
-      { status: 500 }
+      { status: 500 },
     );
+  }
+
+  // ── 4. Recalculate total_wealth (fallback if DB trigger not applied) ──────────
+  try {
+    const { data: allAssets } = await admin
+      .from('assets')
+      .select('value')
+      .eq('user_id', user.id);
+
+    if (allAssets) {
+      const totalWealth = allAssets.reduce((sum, a) => sum + (Number(a.value) || 0), 0);
+      const { error: profileErr } = await admin
+        .from('profiles')
+        .update({ total_wealth: totalWealth })
+        .eq('id', user.id);
+
+      if (profileErr) {
+        console.warn('[POST /api/assets] total_wealth update failed:', profileErr.message);
+      } else {
+        console.log('[POST /api/assets] total_wealth updated to', totalWealth);
+      }
+    }
+  } catch (twErr) {
+    // Non-fatal – the asset was saved, only total_wealth update failed
+    console.warn('[POST /api/assets] total_wealth recalc error:', twErr);
   }
 
   return NextResponse.json({ asset }, { status: 201 });

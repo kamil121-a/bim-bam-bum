@@ -28,7 +28,8 @@ export default function LoginPage() {
       setError(result.error);
       setSubmitting(false);
     } else {
-      router.push('/dashboard');
+      // replace() removes /login from history so Back button can't loop back
+      router.replace('/dashboard');
     }
   };
 

@@ -442,6 +442,78 @@ async function valuateFinancial(
 
 const HARD_TIMEOUT_MS = 8_000;
 
+/**
+ * Option B – AI estimates total value from a free-text description.
+ * Used for unique physical items, real estate, collectibles, etc.
+ * AI receives the user's description and returns { value, category, reasoning }.
+ */
+export async function estimateByDescription(description: string): Promise<ValuationResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+
+  try {
+    const completion = await getOpenAI().chat.completions.create(
+      {
+        model:           'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        temperature:     0.3,
+        max_tokens:      200,
+        messages: [
+          {
+            role: 'system',
+            content: `Jesteś ekspertem wyceny aktywów na polskim rynku (rok 2026). Oceń wartość rynkową na podstawie opisu użytkownika — to jest realna cena, za którą można sprzedać ten przedmiot/nieruchomość w Polsce.
+
+Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
+{"value":<całkowita wartość PLN, integer, zawsze > 0>,"category":"Elektronika"|"Nieruchomości"|"Inne","reasoning":"<max 25 słów, krótkie uzasadnienie ceny>"}
+
+Zasady wyceny:
+- Podaj realistyczną cenę rynkową (np. z OLX/Allegro dla przedmiotów, z rynku wtórnego dla nieruchomości)
+- Dla nieruchomości: uwzględnij lokalizację, metraż i standard
+- Dla przedmiotów kolekcjonerskich/unikatowych: oceń stan i rzadkość
+- Jeśli opis jest zbyt ogólny, podaj środek przedziału cenowego
+- Value MUSI być > 0`,
+          },
+          { role: 'user', content: description },
+        ],
+      },
+      { signal: controller.signal },
+    );
+
+    const raw    = completion.choices[0]?.message?.content ?? '{}';
+    console.log('[valuate] estimateByDescription response:', raw);
+    const parsed = JSON.parse(raw) as { value?: number; category?: string; reasoning?: string };
+
+    const value       = typeof parsed.value === 'number' && parsed.value > 0
+                          ? Math.round(parsed.value) : 0;
+    const rawCategory = typeof parsed.category === 'string' ? parsed.category.trim() : 'Inne';
+
+    if (value === 0) {
+      return physicalResult(rawCategory, 'AI nie zwróciła wartości. Wpisz ją ręcznie.');
+    }
+
+    return {
+      estimatedValue:    value,
+      unitPrice:         value,
+      currency:          'PLN',
+      confidence:        'medium',
+      source:            'OpenAI gpt-4o-mini (wycena z opisu)',
+      suggestedCategory: toDbCategory(rawCategory),
+      aiCategory:        rawCategory,
+      reasoning:         parsed.reasoning?.trim() ?? 'Szacunkowa wartość rynkowa wg AI.',
+    };
+
+  } catch (err) {
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || controller.signal.aborted);
+    console.error('[valuate] estimateByDescription error:', err);
+    return physicalResult(
+      'Inne',
+      isAbort ? 'Przekroczono czas wyceny (8 s). Spróbuj ponownie.' : 'Błąd AI. Wpisz wartość ręcznie.',
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function estimateValue(
   itemName: string,
   quantity = 1,
