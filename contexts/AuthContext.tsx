@@ -98,13 +98,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      */
     const init = async () => {
       try {
-        // ── Fast path: read cached session from localStorage (no network) ──────
-        const { data: { session } } = await supabase.auth.getSession();
+        // ── Fast path: read cached session from localStorage ──────────────────
+        // getSession() is normally instant (reads localStorage) but CAN make a
+        // network request if the token is expired and needs refreshing.
+        // Promise.race with a 4-second timeout ensures we never hang.
+        const sessionResult = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{ data: { session: null } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null } }), 4_000),
+          ),
+        ]);
 
         if (!mounted) return;
 
+        const session = sessionResult.data.session;
+
         if (!session?.user) {
-          // No session stored → show login immediately
+          // No session stored (or timed out) → show login immediately
           setUser(null);
           setLoading(false);
           return;

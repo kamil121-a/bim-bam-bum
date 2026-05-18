@@ -27,7 +27,8 @@ export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [fetchLoading, setFetchLoading] = useState(false);
+  // Start true so the skeleton shows immediately instead of briefly flashing "Brak aktywów"
+  const [fetchLoading, setFetchLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
@@ -121,9 +122,9 @@ export default function DashboardPage() {
     total: assets.filter(a => a.category === cat).reduce((s, a) => s + a.value, 0),
   })).filter(g => g.assets.length > 0);
 
-  // Only block the WHOLE page during auth check (very fast with getSession fast-path).
-  // Assets load in the background without blocking the full page render.
-  if (loading) {
+  // Show full-page spinner only while auth is resolving (< 50 ms with fast-path getSession).
+  // If user is null after auth, return null briefly until the router.replace('/login') fires.
+  if (loading || !user) {
     return (
       <>
         <Navigation />

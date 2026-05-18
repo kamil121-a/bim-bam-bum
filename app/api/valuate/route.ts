@@ -23,14 +23,7 @@ export const maxDuration = 10;
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
-  // ── Auth ─────────────────────────────────────────────────────────────────────
-  const supabase = createSupabaseServerClient(request);
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // ── Body ─────────────────────────────────────────────────────────────────────
+  // ── Parse body first (sync, free) ────────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
     body = await request.json() as Record<string, unknown>;
@@ -38,8 +31,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Nieprawidłowe dane żądania.' }, { status: 400 });
   }
 
+  const supabase = createSupabaseServerClient(request);
+
   // ── Option B: opis / unikaty ──────────────────────────────────────────────────
   if (body.mode === 'description') {
+    // Auth check sequentially (description path is already slow due to Tavily+OpenAI)
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     if (description.length < 10) {
       return NextResponse.json(
@@ -56,7 +57,7 @@ export async function POST(request: NextRequest) {
 
   if (!ticker) {
     return NextResponse.json(
-      { success: false, error: 'Brak tickera. Wpisz symbol, np. AAPL.US, PKN.PL, BTC lub Złoto.' },
+      { success: false, error: 'Brak tickera. Wpisz symbol, np. AAPL.US, PKN.PL, BTC lub GOLD.' },
       { status: 400 },
     );
   }
@@ -65,30 +66,40 @@ export async function POST(request: NextRequest) {
   console.log(`[valuate] Opcja A – ticker: "${displayTicker}", qty: ${quantity}`);
 
   try {
-    // 1. Buduj zoptymalizowane zapytanie i szukaj w Tavily
+    // ── Kluczowa optymalizacja: auth + Tavily równolegle ─────────────────────
+    // Vercel Hobby limit: 10 s. Supabase getUser() zajmuje ~2-4 s na cold starcie.
+    // Tavily zajmuje do 5 s. Uruchamiając je jednocześnie, całkowity czas ≤ 7 s.
     const optimizedQuery = buildTavilyQuery(ticker);
     console.log('Wysłane zapytanie do Tavily:', optimizedQuery);
 
-    const context = await searchTavilyMarket(optimizedQuery);
-    if (!context) {
-      throw new Error('Tavily nie zwróciło żadnych wyników – sprawdź klucz API lub połączenie.');
+    const [authResult, context] = await Promise.all([
+      supabase.auth.getUser(),
+      searchTavilyMarket(optimizedQuery),
+    ]);
+
+    const { data: { user }, error: authError } = authResult;
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Wyciągnij cenę przez OpenAI; konwersja USD→PLN via NBP jest wewnątrz extractMarketPrice
+    if (!context) {
+      throw new Error('Tavily nie zwróciło żadnych wyników. Sprawdź klucz API lub połączenie.');
+    }
+
+    // ── Wyciągnij cenę przez OpenAI; konwersja walut via NBP jest wewnątrz ────
     const priceData = await extractMarketPrice(displayTicker, context);
 
     if (!priceData || priceData.unitPricePLN <= 0) {
-      throw new Error('Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś go poprawnie.');
+      throw new Error('Nie udało się automatycznie wycenić tego symbolu.');
     }
 
-    // 4. Oblicz wartość łączną
     const unitPrice      = parseFloat(priceData.unitPricePLN.toFixed(2));
     const estimatedValue = Math.round(unitPrice * quantity);
 
     console.log(
       `Wykryto ticker: ${displayTicker} |`,
-      `Pobrana cena końcowa w PLN: ${unitPrice} |`,
-      `Wartość łączna: ${estimatedValue}`,
+      `Cena: ${unitPrice} PLN/szt. |`,
+      `Łącznie: ${estimatedValue} PLN`,
     );
 
     return NextResponse.json({
@@ -96,7 +107,7 @@ export async function POST(request: NextRequest) {
       unitPrice,
       currency:          'PLN',
       confidence:        'medium',
-      source:            `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP USD/PLN`,
+      source:            `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP`,
       suggestedCategory: 'Finanse',
       aiCategory:        'Giełda',
       reasoning:         priceData.reasoning,
@@ -106,7 +117,7 @@ export async function POST(request: NextRequest) {
     const msg = err instanceof Error ? err.message : 'Nieznany błąd wyceny.';
     console.error(`[valuate] Błąd dla "${displayTicker}":`, msg);
     return NextResponse.json(
-      { success: false, error: 'Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś go poprawnie.' },
+      { success: false, error: 'Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś poprawny ticker (np. MSFT.US, PKN.PL, BTC, GOLD).' },
       { status: 422 },
     );
   }
