@@ -8,7 +8,7 @@ import Navigation from '@/components/Navigation';
 import AssetCard, { formatPLN } from '@/components/AssetCard';
 import CategoryBadge from '@/components/CategoryBadge';
 import type { Asset, AssetCategory } from '@/types';
-import { PlusCircle, TrendingUp, Package, Layers } from 'lucide-react';
+import { PlusCircle, TrendingUp, Package, Layers, RefreshCw } from 'lucide-react';
 
 const CATEGORY_ORDER: AssetCategory[] = ['Finanse', 'Nieruchomości', 'Elektronika', 'Inne'];
 
@@ -18,6 +18,8 @@ export default function DashboardPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [fetchLoading, setFetchLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -46,6 +48,30 @@ export default function DashboardPage() {
     setDeletingId(null);
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const res = await fetch('/api/assets/refresh', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setAssets(data.assets);
+        const msg =
+          data.failed > 0
+            ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się).`
+            : `Zaktualizowano ${data.updated} aktywów według aktualnych cen rynkowych.`;
+        setRefreshMsg(msg);
+        setTimeout(() => setRefreshMsg(null), 5000);
+      } else {
+        setRefreshMsg('Błąd odświeżania. Spróbuj ponownie.');
+      }
+    } catch {
+      setRefreshMsg('Błąd połączenia. Spróbuj ponownie.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const totalValue = assets.reduce((sum, a) => sum + a.value, 0);
 
   const byCategory = CATEGORY_ORDER.map(cat => ({
@@ -69,13 +95,35 @@ export default function DashboardPage() {
     <>
       <Navigation />
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-        {/* Welcome */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900">
-            Witaj, <span className="text-indigo-600">{user?.username}</span> 👋
-          </h2>
-          <p className="text-gray-500 mt-1">Oto przegląd Twojego majątku</p>
+
+        {/* Welcome + refresh button */}
+        <div className="flex items-start justify-between mb-8 gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Witaj, <span className="text-indigo-600">{user?.username}</span> 👋
+            </h2>
+            <p className="text-gray-500 mt-1">Oto przegląd Twojego majątku</p>
+          </div>
+
+          {assets.length > 0 && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Ponownie wycenia wszystkie aktywa przez AI i aktualizuje ceny"
+              className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Odświeżam…' : 'Odśwież wartość majątku'}
+            </button>
+          )}
         </div>
+
+        {/* Refresh status message */}
+        {refreshMsg && (
+          <div className="mb-6 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+            {refreshMsg}
+          </div>
+        )}
 
         {/* Summary cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
@@ -110,7 +158,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Assets */}
+        {/* Assets list */}
         {assets.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-200">
             <div className="text-5xl mb-4">💼</div>
@@ -148,7 +196,16 @@ export default function DashboardPage() {
               </section>
             ))}
 
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between pt-2">
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Odświeżam ceny…' : 'Odśwież wyceny AI'}
+              </button>
+
               <Link
                 href="/add-asset"
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200"

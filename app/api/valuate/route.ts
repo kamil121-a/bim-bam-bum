@@ -14,7 +14,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { name } = (await request.json()) as { name?: string };
+    const { name, quantity } = (await request.json()) as {
+      name?: string;
+      quantity?: number;
+    };
 
     if (!name || name.trim().length < 2) {
       return NextResponse.json(
@@ -23,7 +26,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await estimateValue(name.trim());
+    const qty = typeof quantity === 'number' && quantity > 0 ? quantity : 1;
+    const result = await estimateValue(name.trim(), qty);
     return NextResponse.json(result);
   } catch {
     return NextResponse.json({ error: 'Błąd wyceny.' }, { status: 500 });

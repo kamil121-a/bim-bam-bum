@@ -8,12 +8,21 @@ import CategoryBadge from '@/components/CategoryBadge';
 import { formatPLN } from '@/components/AssetCard';
 import type { AssetCategory } from '@/types';
 import { ASSET_CATEGORIES } from '@/types';
-import { Search, Sparkles, CheckCircle, RotateCcw, ChevronDown } from 'lucide-react';
+import {
+  Search,
+  Hash,
+  Sparkles,
+  CheckCircle,
+  RotateCcw,
+  ChevronDown,
+  Lock,
+} from 'lucide-react';
 
 type Step = 'input' | 'valuating' | 'confirm' | 'saving' | 'saved';
 
 interface ValuationResult {
   estimatedValue: number;
+  unitPrice: number;
   currency: string;
   confidence: 'high' | 'medium' | 'low';
   source: string;
@@ -28,10 +37,21 @@ const CONFIDENCE_LABEL: Record<string, string> = {
 };
 
 const CONFIDENCE_COLOR: Record<string, string> = {
-  high: 'text-emerald-600 bg-emerald-50',
-  medium: 'text-amber-600 bg-amber-50',
-  low: 'text-red-600 bg-red-50',
+  high: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+  medium: 'text-amber-600 bg-amber-50 border-amber-200',
+  low: 'text-red-600 bg-red-50 border-red-200',
 };
+
+const EXAMPLES: Array<{ label: string; name: string; qty: string }> = [
+  { label: 'S&P 500 ETF', name: 'S&P 500 ETF', qty: '10' },
+  { label: 'Bitcoin', name: 'Bitcoin', qty: '0.5' },
+  { label: 'Złoto', name: 'Złoto', qty: '10' },
+  { label: 'Srebro 1 uncja', name: 'Srebro', qty: '5' },
+  { label: 'iPhone 15', name: 'iPhone 15 używany', qty: '1' },
+  { label: 'MacBook Pro', name: 'MacBook Pro M3', qty: '1' },
+  { label: 'PS5', name: 'PlayStation 5', qty: '1' },
+  { label: 'Mieszkanie', name: 'Mieszkanie 50m² Warszawa', qty: '1' },
+];
 
 export default function AddAssetPage() {
   const { user, loading } = useAuth();
@@ -39,9 +59,9 @@ export default function AddAssetPage() {
 
   const [step, setStep] = useState<Step>('input');
   const [name, setName] = useState('');
+  const [quantity, setQuantity] = useState('1');
   const [valuation, setValuation] = useState<ValuationResult | null>(null);
   const [category, setCategory] = useState<AssetCategory>('Inne');
-  const [customValue, setCustomValue] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -54,6 +74,11 @@ export default function AddAssetPage() {
       setError('Wpisz co najmniej 2 znaki nazwy aktywa.');
       return;
     }
+    const qty = parseFloat(quantity);
+    if (isNaN(qty) || qty <= 0) {
+      setError('Podaj prawidłową ilość (większą niż 0).');
+      return;
+    }
     setError('');
     setStep('valuating');
 
@@ -61,7 +86,7 @@ export default function AddAssetPage() {
       const res = await fetch('/api/valuate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), quantity: qty }),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -70,7 +95,6 @@ export default function AddAssetPage() {
       const data: ValuationResult = await res.json();
       setValuation(data);
       setCategory(data.suggestedCategory);
-      setCustomValue(String(data.estimatedValue));
       setStep('confirm');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Błąd wyceny. Spróbuj ponownie.');
@@ -79,9 +103,8 @@ export default function AddAssetPage() {
   };
 
   const handleConfirm = async () => {
-    const finalValue = parseFloat(customValue);
-    if (isNaN(finalValue) || finalValue <= 0) {
-      setError('Wprowadź poprawną wartość.');
+    if (!valuation || valuation.estimatedValue <= 0) {
+      setError('Brak wyceny do zatwierdzenia.');
       return;
     }
     setError('');
@@ -90,7 +113,13 @@ export default function AddAssetPage() {
     const res = await fetch('/api/assets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim(), category, value: finalValue }),
+      body: JSON.stringify({
+        name: name.trim(),
+        category,
+        value: valuation.estimatedValue,
+        quantity: parseFloat(quantity),
+        reasoning: valuation.reasoning,
+      }),
     });
 
     if (!res.ok) {
@@ -106,10 +135,14 @@ export default function AddAssetPage() {
   const handleReset = () => {
     setStep('input');
     setName('');
+    setQuantity('1');
     setValuation(null);
-    setCustomValue('');
     setError('');
   };
+
+  const qty = parseFloat(quantity) || 1;
+  const showBreakdown =
+    valuation && valuation.unitPrice > 0 && qty !== 1;
 
   if (loading) {
     return (
@@ -129,14 +162,17 @@ export default function AddAssetPage() {
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900">Dodaj nowe aktywo</h2>
           <p className="text-gray-500 mt-1">
-            AI wyceni Twój przedmiot – Ty potwierdzasz wartość przed zapisem.
+            AI wyceni wartość – Ty tylko potwierdzasz. Kwota jest blokowana, aby
+            ranking był sprawiedliwy.
           </p>
         </div>
 
-        {/* Step: Input */}
+        {/* ── Step: Input ── */}
         {(step === 'input' || step === 'valuating') && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
-            <form onSubmit={handleValuate} className="space-y-6">
+            <form onSubmit={handleValuate} className="space-y-5">
+
+              {/* Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Nazwa aktywa / przedmiotu
@@ -147,14 +183,35 @@ export default function AddAssetPage() {
                     type="text"
                     value={name}
                     onChange={e => setName(e.target.value)}
-                    placeholder='np. "S&P 500 ETF", "iPhone 15", "Srebro 1 uncja"'
+                    placeholder='np. "Bitcoin", "S&P 500 ETF", "iPhone 15"'
                     className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
                     disabled={step === 'valuating'}
                     autoFocus
                   />
                 </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  Im dokładniejsza nazwa, tym precyzyjniejsza wycena. Możesz wpisać markę, model, stan.
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ilość / liczba jednostek
+                </label>
+                <div className="relative">
+                  <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    type="number"
+                    min="0.0001"
+                    step="any"
+                    value={quantity}
+                    onChange={e => setQuantity(e.target.value)}
+                    placeholder="np. 1, 2.5, 10"
+                    className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
+                    disabled={step === 'valuating'}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Dla kruszców: uncje lub gramy. Dla crypto/akcji: liczba sztuk.
+                  Dla przedmiotów: 1.
                 </p>
               </div>
 
@@ -172,7 +229,7 @@ export default function AddAssetPage() {
                 {step === 'valuating' ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Wyceniam...
+                    Wyceniam przez AI…
                   </>
                 ) : (
                   <>
@@ -183,31 +240,24 @@ export default function AddAssetPage() {
               </button>
             </form>
 
-            {/* Examples */}
+            {/* Quick-fill examples */}
             <div className="mt-6 pt-6 border-t border-gray-100">
               <p className="text-xs font-medium text-gray-400 mb-3 uppercase tracking-wide">
-                Przykłady obsługiwanych aktywów
+                Szybki wybór
               </p>
               <div className="flex flex-wrap gap-2">
-                {[
-                  'S&P 500 ETF',
-                  'Bitcoin',
-                  'Złoto 1 gram',
-                  'Srebro 1 uncja',
-                  'iPhone 15',
-                  'MacBook Pro',
-                  'PS5',
-                  'Mieszkanie',
-                  'Samochód',
-                ].map(ex => (
+                {EXAMPLES.map(ex => (
                   <button
-                    key={ex}
+                    key={ex.label}
                     type="button"
-                    onClick={() => setName(ex)}
+                    onClick={() => {
+                      setName(ex.name);
+                      setQuantity(ex.qty);
+                    }}
                     disabled={step === 'valuating'}
                     className="px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors"
                   >
-                    {ex}
+                    {ex.label}
                   </button>
                 ))}
               </div>
@@ -215,20 +265,28 @@ export default function AddAssetPage() {
           </div>
         )}
 
-        {/* Step: Confirm */}
+        {/* ── Step: Confirm ── */}
         {(step === 'confirm' || step === 'saving') && valuation && (
           <div className="space-y-4">
-            {/* Valuation result card */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+
+              {/* Value header */}
               <div className="bg-gradient-to-br from-indigo-50 to-purple-50 px-8 py-6 border-b border-gray-100">
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-sm text-gray-500 mb-1">Szacowana wartość</p>
+                    {showBreakdown && (
+                      <p className="text-sm text-gray-400 mb-1">
+                        {qty} × {formatPLN(valuation.unitPrice)} za szt.
+                      </p>
+                    )}
+                    <p className="text-sm text-gray-500 mb-1">Łączna wartość wg AI</p>
                     <p className="text-4xl font-bold text-indigo-700">
                       {formatPLN(valuation.estimatedValue)}
                     </p>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${CONFIDENCE_COLOR[valuation.confidence]}`}>
+                  <span
+                    className={`shrink-0 mt-1 px-3 py-1 rounded-full text-xs font-semibold border ${CONFIDENCE_COLOR[valuation.confidence]}`}
+                  >
                     Pewność: {CONFIDENCE_LABEL[valuation.confidence]}
                   </span>
                 </div>
@@ -237,20 +295,21 @@ export default function AddAssetPage() {
               </div>
 
               <div className="px-8 py-6 space-y-5">
-                {/* Asset name */}
+                {/* Name + quantity summary */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Nazwa aktywa
+                    Aktywo
                   </label>
                   <p className="px-4 py-3 bg-gray-50 rounded-xl text-gray-900 font-medium">
-                    {name}
+                    {qty !== 1 ? `${qty} × ` : ''}{name}
                   </p>
                 </div>
 
-                {/* Category */}
+                {/* Category – only editable field */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     Kategoria
+                    <span className="ml-2 text-xs font-normal text-gray-400">(możesz zmienić)</span>
                   </label>
                   <div className="relative">
                     <select
@@ -268,28 +327,28 @@ export default function AddAssetPage() {
                   </div>
                   <div className="mt-2">
                     <CategoryBadge category={category} />
-                    <span className="text-xs text-gray-400 ml-2">AI zasugerowało tę kategorię</span>
+                    <span className="text-xs text-gray-400 ml-2">sugestia AI</span>
                   </div>
                 </div>
 
-                {/* Custom value */}
+                {/* Value – READONLY, locked */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Wartość (PLN) – możesz zmienić
+                    Wycena końcowa
                   </label>
                   <div className="relative">
                     <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={customValue}
-                      onChange={e => setCustomValue(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 pr-16"
+                      type="text"
+                      readOnly
+                      value={formatPLN(valuation.estimatedValue)}
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed select-none"
                     />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-medium">
-                      PLN
-                    </span>
+                    <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
                   </div>
+                  <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                    <Lock className="w-3 h-3" />
+                    Kwota jest ustalana przez AI – nie można jej zmienić ręcznie.
+                  </p>
                 </div>
 
                 {error && (
@@ -312,18 +371,18 @@ export default function AddAssetPage() {
               </button>
               <button
                 onClick={handleConfirm}
-                disabled={step === 'saving'}
+                disabled={step === 'saving' || valuation.estimatedValue <= 0}
                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold rounded-xl transition-colors shadow-md shadow-emerald-200"
               >
                 {step === 'saving' ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Zapisuję...
+                    Zapisuję…
                   </>
                 ) : (
                   <>
                     <CheckCircle className="w-5 h-5" />
-                    Potwierdź i zapisz
+                    Potwierdź i dodaj do majątku
                   </>
                 )}
               </button>
@@ -331,19 +390,21 @@ export default function AddAssetPage() {
           </div>
         )}
 
-        {/* Step: Saved */}
-        {step === 'saved' && (
+        {/* ── Step: Saved ── */}
+        {step === 'saved' && valuation && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
             <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
               <CheckCircle className="w-10 h-10 text-emerald-600" />
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">Zapisano!</h3>
-            <p className="text-gray-500 mb-2">
-              <strong className="text-gray-800">{name}</strong> zostało dodane do Twojego majątku.
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">Dodano!</h3>
+            <p className="text-gray-500 mb-1">
+              {qty !== 1 ? `${qty} × ` : ''}
+              <strong className="text-gray-800">{name}</strong>
             </p>
-            <p className="text-sm text-gray-400 mb-8">
-              Wartość: <strong className="text-indigo-700">{formatPLN(parseFloat(customValue))}</strong>
+            <p className="text-3xl font-bold text-indigo-700 my-3">
+              {formatPLN(valuation.estimatedValue)}
             </p>
+            <p className="text-sm text-gray-400 mb-8">dodane do Twojego majątku</p>
             <div className="flex gap-3 justify-center">
               <button
                 onClick={handleReset}

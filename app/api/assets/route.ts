@@ -44,12 +44,16 @@ export async function POST(request: NextRequest) {
       name?: string;
       category?: AssetCategory;
       value?: number;
+      quantity?: number;
       reasoning?: string;
     };
 
     const { name, category, value, reasoning } = body;
+    const quantity = typeof body.quantity === 'number' && body.quantity > 0
+      ? body.quantity
+      : 1;
 
-    if (!name?.trim() || !category || value == null || isNaN(value) || value < 0) {
+    if (!name?.trim() || !category || value == null || isNaN(value) || value <= 0) {
       return NextResponse.json(
         { error: 'Nieprawidłowe dane aktywa.' },
         { status: 400 }
@@ -63,7 +67,8 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         name: name.trim(),
         category,
-        value: Math.round(value * 100) / 100,
+        value: Math.round(value),
+        quantity,
         reasoning: reasoning ?? null,
       })
       .select()

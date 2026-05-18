@@ -1,11 +1,3 @@
-export interface User {
-  id: string;
-  username: string;
-  email: string;
-  passwordHash: string;
-  createdAt: string;
-}
-
 export type AssetCategory = 'Elektronika' | 'Finanse' | 'Nieruchomości' | 'Inne';
 
 export const ASSET_CATEGORIES: AssetCategory[] = [
@@ -15,33 +7,21 @@ export const ASSET_CATEGORIES: AssetCategory[] = [
   'Inne',
 ];
 
+/** Matches Supabase snake_case column names returned from the DB. */
 export interface Asset {
   id: string;
-  userId: string;
+  user_id: string;
   name: string;
   category: AssetCategory;
   value: number;
-  createdAt: string;
+  quantity: number;
+  reasoning: string | null;
+  created_at: string;
 }
 
-export interface Session {
-  token: string;
-  userId: string;
-  expiresAt: string;
-}
-
-export interface Database {
-  users: User[];
-  assets: Asset[];
-  sessions: Session[];
-}
-
-export interface PublicUser {
+export interface RankingEntry {
   id: string;
   username: string;
-}
-
-export interface RankingEntry extends PublicUser {
   totalValue: number;
   assetCount: number;
 }
