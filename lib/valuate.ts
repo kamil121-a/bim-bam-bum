@@ -1,37 +1,37 @@
 /**
- * Two-step valuation – strict separation of concerns:
+ * Two-step valuation – no external libraries, only native fetch.
  *
- * STEP 1  AI Classification (gpt-4o-mini, temp=0)
- *   AI does ONE job only: read the user's text and return structured JSON.
- *   { type, ticker, category }
- *   AI is FORBIDDEN from pricing anything.
+ * STEP 1  AI Classification (gpt-4o-mini, temp=0, ~80 tokens)
+ *   AI classifies the user's input and returns: { type, asset_id, category }
+ *   AI is FORBIDDEN from providing any prices.
  *
- * STEP 2  Pure TypeScript math
- *   "financial" → fetch real-time price from Yahoo Finance
- *                 + USD/PLN from NBP API → multiply by quantity
- *   "physical"  → return requiresManualPrice=true, estimatedValue=0
- *                 (user enters their own price in the UI)
+ * STEP 2  TypeScript math with free, stable APIs
+ *   "financial" → route by asset_id:
+ *     gold          → NBP cenyzłota  (PLN/gram, authoritative PL source)
+ *     silver/etc.   → metals.live    (USD/troy oz) + NBP USD/PLN
+ *     bitcoin/etc.  → CoinGecko      (PLN direct, free, no key)
+ *     stock/ETF     → Twelve Data    (USD) + NBP USD/PLN [needs TWELVE_DATA_API_KEY]
+ *     PLN cash      → 1:1 PLN
+ *   "physical" → requiresManualPrice = true (user enters their own price)
  *
- * No AI hallucinations. No estimated prices from language models.
- * 100 % reproducible math.
+ * Every API call logs the raw price to console so the server terminal shows
+ * exactly what was fetched before the value is saved to the database.
  */
 
-import yahooFinance from 'yahoo-finance2';
 import OpenAI from 'openai';
 import type { AssetCategory } from '@/types';
 
 // ─── Exported result type ─────────────────────────────────────────────────────
 
 export interface ValuationResult {
-  estimatedValue:    number;         // total PLN (0 when requiresManualPrice)
-  unitPrice:         number;         // PLN per 1 user unit (0 when requiresManualPrice)
-  currency:          'PLN';
-  confidence:        'high' | 'medium' | 'low';
-  source:            string;
-  suggestedCategory: AssetCategory;
-  aiCategory:        string;
-  reasoning:         string;
-  /** true for physical items – UI should show a manual price input */
+  estimatedValue:      number;
+  unitPrice:           number;
+  currency:            'PLN';
+  confidence:          'high' | 'medium' | 'low';
+  source:              string;
+  suggestedCategory:   AssetCategory;
+  aiCategory:          string;
+  reasoning:           string;
   requiresManualPrice?: boolean;
 }
 
@@ -51,6 +51,22 @@ function toDbCategory(raw: string): AssetCategory {
   return AI_TO_DB[(raw ?? '').trim()] ?? 'Inne';
 }
 
+// ─── Fallback for physical / unresolvable assets ──────────────────────────────
+
+function physicalResult(category: string, reason?: string): ValuationResult {
+  return {
+    estimatedValue:      0,
+    unitPrice:           0,
+    currency:            'PLN',
+    confidence:          'low',
+    source:              'Manualna wycena',
+    suggestedCategory:   toDbCategory(category),
+    aiCategory:          category || 'Inne',
+    reasoning:           reason ?? 'Wpisz szacowaną wartość rynkową (np. z Allegro / OLX).',
+    requiresManualPrice: true,
+  };
+}
+
 // ─── OpenAI singleton ─────────────────────────────────────────────────────────
 
 let _openai: OpenAI | null = null;
@@ -59,83 +75,226 @@ function getOpenAI(): OpenAI {
   return _openai;
 }
 
-// ─── NBP USD/PLN (30-min cache) ───────────────────────────────────────────────
+// ─── Known CoinGecko crypto IDs ───────────────────────────────────────────────
+
+const COINGECKO_IDS = new Set([
+  'bitcoin', 'ethereum', 'tether', 'binancecoin', 'solana', 'ripple',
+  'cardano', 'dogecoin', 'avalanche-2', 'polkadot', 'chainlink', 'litecoin',
+  'cosmos', 'uniswap', 'stellar', 'monero', 'filecoin', 'aave', 'maker',
+  'the-graph', 'compound', 'ethereum-classic', 'tron', 'near', 'algorand',
+  'vechain', 'internet-computer', 'fantom', 'shiba-inu', 'pepe', 'toncoin',
+  'aptos', 'arbitrum', 'optimism', 'bonk', 'polygon', 'injective',
+]);
+
+// ─── Known metals (asset_id → metals.live slug) ───────────────────────────────
+
+const METAL_SLUGS: Record<string, string> = {
+  silver:    'silver',
+  srebro:    'silver',
+  platinum:  'platinum',
+  platyna:   'platinum',
+  palladium: 'palladium',
+  pallad:    'palladium',
+  copper:    'copper',
+  miedz:     'copper',
+  miedź:     'copper',
+};
+
+// ─── API 1: NBP USD/PLN (30-min cache) ───────────────────────────────────────
 
 let _nbpCache: { rate: number; ts: number } | null = null;
 
 async function getUsdPln(signal: AbortSignal): Promise<number> {
-  if (_nbpCache && Date.now() - _nbpCache.ts < 30 * 60 * 1000) return _nbpCache.rate;
+  if (_nbpCache && Date.now() - _nbpCache.ts < 30 * 60 * 1000) {
+    console.log('[NBP] USD/PLN from cache:', _nbpCache.rate);
+    return _nbpCache.rate;
+  }
   const res = await fetch(
     'https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json',
     { signal, headers: { Accept: 'application/json' } },
   );
   if (!res.ok) throw new Error(`NBP HTTP ${res.status}`);
   const data = await res.json() as { rates: Array<{ mid: number }> };
-  _nbpCache = { rate: data.rates[0].mid, ts: Date.now() };
-  return _nbpCache.rate;
+  const rate = data.rates[0].mid;
+  _nbpCache = { rate, ts: Date.now() };
+  console.log('[NBP] Pobrana cena: kurs USD/PLN =', rate);
+  return rate;
 }
 
-// ─── Yahoo Finance price (native currency of the ticker) ──────────────────────
+// ─── API 2: NBP złoto (PLN per gram) ─────────────────────────────────────────
 
-async function getSpotPrice(ticker: string): Promise<number | null> {
+async function fetchGoldPlnPerGram(signal: AbortSignal): Promise<number | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const q: any = await yahooFinance.quote(ticker, {}, { validateResult: false });
-    const p = q?.regularMarketPrice;
-    return typeof p === 'number' && p > 0 ? p : null;
+    const res = await fetch(
+      'https://api.nbp.pl/api/cenyzlota/?format=json',
+      { signal, headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) throw new Error(`NBP cenyzlota HTTP ${res.status}`);
+    const data = await res.json() as Array<{ data: string; cena: number }>;
+    const price = data[0]?.cena;
+    if (typeof price !== 'number' || price <= 0) return null;
+    console.log('[NBP] Pobrana cena: złoto =', price, 'PLN/gram');
+    return price;
   } catch (err) {
-    console.warn(`[valuate] Yahoo Finance "${ticker}":`, err);
+    console.warn('[valuate] NBP cenyzlota error:', err);
     return null;
   }
 }
 
-// ─── Step 1 – AI Classifier ───────────────────────────────────────────────────
+// ─── API 3: metals.live (USD per troy ounce) ─────────────────────────────────
+
+async function fetchMetalUsd(slug: string, signal: AbortSignal): Promise<number | null> {
+  try {
+    const res = await fetch(
+      `https://api.metals.live/v1/spot/${slug}`,
+      { signal, headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) throw new Error(`metals.live HTTP ${res.status}`);
+    const raw = await res.json();
+
+    // Handle multiple possible response shapes defensively
+    let price: unknown;
+    if (typeof raw === 'number') {
+      price = raw;
+    } else if (Array.isArray(raw) && raw.length > 0) {
+      price = raw[0][slug] ?? raw[0].price ?? raw[0].rate;
+    } else if (raw && typeof raw === 'object') {
+      price = (raw as Record<string, unknown>)[slug]
+        ?? (raw as Record<string, unknown>).price
+        ?? (raw as Record<string, unknown>).rate;
+    }
+
+    const p = typeof price === 'number' && price > 0 ? price : null;
+    if (p) console.log(`[metals.live] Pobrana cena: ${slug} =`, p, 'USD/oz');
+    return p;
+  } catch (err) {
+    console.warn(`[valuate] metals.live error for ${slug}:`, err);
+    return null;
+  }
+}
+
+// ─── API 4: CoinGecko (PLN per coin, free, no key required) ──────────────────
+
+async function fetchCryptoPln(coingeckoId: string, signal: AbortSignal): Promise<number | null> {
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coingeckoId)}&vs_currencies=pln&precision=2`;
+    const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
+    const data = await res.json() as Record<string, { pln?: number }>;
+    const price = data[coingeckoId]?.pln;
+    if (typeof price !== 'number' || price <= 0) return null;
+    console.log(`[CoinGecko] Pobrana cena: ${coingeckoId} =`, price, 'PLN');
+    return price;
+  } catch (err) {
+    console.warn(`[valuate] CoinGecko error for ${coingeckoId}:`, err);
+    return null;
+  }
+}
+
+// ─── API 5: Twelve Data (USD per share, requires TWELVE_DATA_API_KEY) ────────
+
+async function fetchStockUsd(symbol: string, signal: AbortSignal): Promise<number | null> {
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  if (!apiKey) {
+    console.warn('[valuate] TWELVE_DATA_API_KEY not set – manual price required for stocks');
+    return null;
+  }
+
+  try {
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
+    const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`Twelve Data HTTP ${res.status}`);
+
+    const data = await res.json() as { price?: string; code?: number; message?: string; status?: string };
+
+    if (data.code || data.status === 'error' || !data.price) {
+      console.warn('[valuate] Twelve Data error:', data.message ?? 'no price field');
+      return null;
+    }
+
+    const price = parseFloat(data.price);
+    if (isNaN(price) || price <= 0) return null;
+
+    console.log(`[TwelveData] Pobrana cena: ${symbol} =`, price, 'USD');
+    return price;
+  } catch (err) {
+    console.warn(`[valuate] Twelve Data error for ${symbol}:`, err);
+    return null;
+  }
+}
+
+// ─── Step 1: AI Classification ────────────────────────────────────────────────
 
 interface Classification {
   type:     'financial' | 'physical';
-  ticker:   string | null;
+  asset_id: string | null;
   category: string;
 }
 
 /**
- * AI's ONLY job: classify the user's text. No prices. No estimates.
- * Returns structured JSON: { type, ticker, category }.
+ * AI's ONLY job: classify the user's input.
+ * Return { type, asset_id, category }.
+ * NO prices. NO estimates. ONLY identification.
  */
-const CLASSIFY_PROMPT = `Jesteś klasyfikatorem aktywów. Twoje JEDYNE zadanie to przeanalizować wpis użytkownika i zwrócić JSON klasyfikujący aktywo. ABSOLUTNIE NIE wolno Ci podawać żadnych cen ani kwot.
+const CLASSIFY_PROMPT = `Jesteś klasyfikatorem aktywów. Twoje JEDYNE zadanie to przeanalizować wpis użytkownika i zwrócić JSON identyfikujący aktywo. ABSOLUTNIE NIE wolno Ci podawać żadnych cen ani kwot.
 
 Zwróć WYŁĄCZNIE czysty JSON (zero tekstu poza JSON):
 {
   "type": "financial" | "physical",
-  "ticker": string | null,
+  "asset_id": string | null,
   "category": "Giełda" | "Krypto" | "Metale" | "Waluty" | "Elektronika" | "Nieruchomości" | "Inne"
 }
 
-ZASADY TICKERÓW (Yahoo Finance):
-• Złoto      → "GC=F"
-• Srebro     → "SI=F"
-• Platyna    → "PL=F"
-• Pallad     → "PA=F"
-• Miedź      → "HG=F"
-• Krypto     → "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "BNB-USD", "AVAX-USD" itp.
-• ETF/Indeks → "SPY" (S&P 500), "QQQ" (NASDAQ 100), "VOO", "VTI", "DIA" itp.
-• Akcje US   → "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "MA", "NFLX", "AMD", "PLTR", "COIN", "UBER" itp.
-• GPW Polska → "PKN.WA" (Orlen), "PKO.WA", "CDR.WA" (CD Projekt), "ALE.WA" (Allegro), "KGH.WA" (KGHM), "PZU.WA", "LPP.WA", "DNO.WA" (Dino) itp.
-• Gotówka PLN → "PLN"
-• Fizyczne przedmioty → type: "physical", ticker: null
+ZASADY IDENTYFIKATORÓW (asset_id):
+• Złoto          → "gold"
+• Srebro         → "silver"
+• Platyna        → "platinum"
+• Pallad         → "palladium"
+• Miedź          → "copper"
+• Bitcoin        → "bitcoin"       (CoinGecko ID)
+• Ethereum       → "ethereum"
+• Solana         → "solana"
+• Ripple / XRP   → "ripple"
+• Cardano / ADA  → "cardano"
+• Dogecoin       → "dogecoin"
+• BNB            → "binancecoin"
+• Litecoin       → "litecoin"
+• Polkadot       → "polkadot"
+• Avalanche      → "avalanche-2"
+• Chainlink      → "chainlink"
+• Toncoin        → "toncoin"
+• Shiba Inu      → "shiba-inu"
+• S&P 500 / SPY  → "SPY"          (ticker giełdowy dla Twelve Data)
+• NASDAQ / QQQ   → "QQQ"
+• Apple          → "AAPL"
+• Microsoft      → "MSFT"
+• Google         → "GOOGL"
+• Amazon         → "AMZN"
+• Tesla          → "TSLA"
+• NVIDIA         → "NVDA"
+• Meta           → "META"
+• Orlen / PKN    → "PKN.WA"
+• PKO BP         → "PKO.WA"
+• CD Projekt     → "CDR.WA"
+• Allegro        → "ALE.WA"
+• KGHM           → "KGH.WA"
+• PZU            → "PZU.WA"
+• Dino           → "DNO.WA"
+• LPP            → "LPP.WA"
+• Gotówka PLN    → "pln"
+• Fizyczne przedmioty (elektronika, samochód, meble, zegarek itp.) → type: "physical", asset_id: null
 
 PRZYKŁADY:
-"złoto 10"           → {"type":"financial","ticker":"GC=F","category":"Metale"}
-"srebro 5 uncji"     → {"type":"financial","ticker":"SI=F","category":"Metale"}
-"Bitcoin"            → {"type":"financial","ticker":"BTC-USD","category":"Krypto"}
-"0.5 ETH"           → {"type":"financial","ticker":"ETH-USD","category":"Krypto"}
-"Apple akcje"        → {"type":"financial","ticker":"AAPL","category":"Giełda"}
-"S&P 500 ETF"        → {"type":"financial","ticker":"SPY","category":"Giełda"}
-"Orlen"              → {"type":"financial","ticker":"PKN.WA","category":"Giełda"}
-"1000 PLN gotówka"   → {"type":"financial","ticker":"PLN","category":"Waluty"}
-"MacBook Pro M4"     → {"type":"physical","ticker":null,"category":"Elektronika"}
-"słuchawki Sony"     → {"type":"physical","ticker":null,"category":"Elektronika"}
-"mieszkanie 50m²"    → {"type":"physical","ticker":null,"category":"Nieruchomości"}
-"samochód"           → {"type":"physical","ticker":null,"category":"Inne"}`;
+"10g złota"           → {"type":"financial","asset_id":"gold","category":"Metale"}
+"srebro 5 uncji"      → {"type":"financial","asset_id":"silver","category":"Metale"}
+"bitcoin"             → {"type":"financial","asset_id":"bitcoin","category":"Krypto"}
+"S&P 500 ETF"         → {"type":"financial","asset_id":"SPY","category":"Giełda"}
+"Apple 3 akcje"       → {"type":"financial","asset_id":"AAPL","category":"Giełda"}
+"Orlen"               → {"type":"financial","asset_id":"PKN.WA","category":"Giełda"}
+"1000 PLN gotówka"    → {"type":"financial","asset_id":"pln","category":"Waluty"}
+"MacBook Pro M4"      → {"type":"physical","asset_id":null,"category":"Elektronika"}
+"mieszkanie 50m²"     → {"type":"physical","asset_id":null,"category":"Nieruchomości"}
+"Zegarek Rolex"       → {"type":"physical","asset_id":null,"category":"Inne"}`;
 
 async function classifyAsset(name: string, signal: AbortSignal): Promise<Classification> {
   const completion = await getOpenAI().chat.completions.create(
@@ -157,47 +316,28 @@ async function classifyAsset(name: string, signal: AbortSignal): Promise<Classif
 
   return {
     type:     parsed.type === 'financial' ? 'financial' : 'physical',
-    ticker:   typeof parsed.ticker === 'string' && parsed.ticker.length > 0
-                ? parsed.ticker.trim().toUpperCase()
+    asset_id: typeof parsed.asset_id === 'string' && parsed.asset_id.length > 0
+                ? parsed.asset_id.trim()
                 : null,
     category: typeof parsed.category === 'string' ? parsed.category.trim() : 'Inne',
   };
 }
 
-// ─── Step 2A – Financial math ─────────────────────────────────────────────────
-
-/** Tickers whose price is already in PLN (Warsaw Stock Exchange). */
-const isPLN = (ticker: string) => ticker.endsWith('.WA');
-
-/** Metal futures – Yahoo Finance price is USD per troy ounce. */
-const METAL_LABELS: Record<string, string> = {
-  'GC=F': 'Złoto',
-  'SI=F': 'Srebro',
-  'PL=F': 'Platyna',
-  'PA=F': 'Pallad',
-  'HG=F': 'Miedź',
-};
-const isMetal = (t: string) => t in METAL_LABELS;
-
-/**
- * METAL UNIT CONVENTION
- * ─────────────────────
- * Yahoo Finance quotes metals in USD per TROY OUNCE.
- * In this app, quantity for metals always represents TROY OUNCES.
- * If a user means grams, they should convert beforehand:
- *   1 troy oz = 31.1035 g  →  10 g = 0.3215 oz
- * The hint text in the UI reflects this convention.
- */
+// ─── Step 2: Route to the right API and calculate ─────────────────────────────
 
 async function valuateFinancial(
-  ticker:   string,
+  assetId:  string,
   category: string,
   qty:      number,
   signal:   AbortSignal,
 ): Promise<ValuationResult | null> {
-  // ── Special case: PLN cash (no external fetch needed) ───────────────────────
-  if (ticker === 'PLN') {
+  const id     = assetId.toLowerCase();
+  const isWA   = assetId.toUpperCase().endsWith('.WA');
+
+  // ── PLN cash ─────────────────────────────────────────────────────────────────
+  if (id === 'pln') {
     const total = Math.round(qty);
+    console.log('[valuate] Pobrana cena: gotówka PLN = 1 PLN (1:1)');
     return {
       estimatedValue:    total,
       unitPrice:         1,
@@ -210,70 +350,97 @@ async function valuateFinancial(
     };
   }
 
-  const plnAsset = isPLN(ticker);
-
-  // Fetch spot price + USD/PLN rate in parallel (skip NBP for PLN-priced assets)
-  const [spot, usdPln] = await Promise.all([
-    getSpotPrice(ticker),
-    plnAsset ? Promise.resolve(1) : getUsdPln(signal),
-  ]);
-
-  if (!spot) return null;
-
-  let unitPricePln: number;
-  let reasoning:    string;
-  const metalLabel = METAL_LABELS[ticker];
-
-  if (isMetal(ticker)) {
-    // spot = USD per troy ounce, qty = troy ounces
-    unitPricePln = Math.round(spot * usdPln);
-    reasoning    = `${metalLabel} (${ticker}): ${spot.toFixed(2)} USD/oz × kurs NBP ${usdPln.toFixed(4)} USD/PLN = ${unitPricePln.toLocaleString('pl-PL')} PLN/oz`;
-  } else if (plnAsset) {
-    unitPricePln = Math.round(spot);
-    reasoning    = `${ticker} na GPW: ${spot.toFixed(2)} PLN/szt.`;
-  } else {
-    unitPricePln = Math.round(spot * usdPln);
-    reasoning    = `${ticker}: ${spot.toFixed(2)} USD × kurs NBP ${usdPln.toFixed(4)} USD/PLN = ${unitPricePln.toLocaleString('pl-PL')} PLN/szt.`;
+  // ── Gold (NBP cenyzłota → PLN per gram) ──────────────────────────────────────
+  if (id === 'gold') {
+    const plnPerGram = await fetchGoldPlnPerGram(signal);
+    if (!plnPerGram) return null;
+    const unitPrice  = Math.round(plnPerGram);
+    const total      = Math.round(plnPerGram * qty);
+    return {
+      estimatedValue:    total,
+      unitPrice,
+      currency:          'PLN',
+      confidence:        'high',
+      source:            'NBP cenyzłota (PLN/gram)',
+      suggestedCategory: 'Finanse',
+      aiCategory:        'Metale',
+      reasoning:         `Złoto wg NBP: ${plnPerGram.toFixed(2)} PLN/gram × ${qty} g = ${total.toLocaleString('pl-PL')} PLN`,
+    };
   }
 
-  const totalValue = Math.round(unitPricePln * qty);
+  // ── Other metals (metals.live → USD/troy oz) ──────────────────────────────────
+  const metalSlug = METAL_SLUGS[id];
+  if (metalSlug) {
+    const [spotUsd, usdPln] = await Promise.all([
+      fetchMetalUsd(metalSlug, signal),
+      getUsdPln(signal),
+    ]);
+    if (!spotUsd) return null;
+    const unitPrice = Math.round(spotUsd * usdPln);
+    const total     = Math.round(unitPrice * qty);
+    const metalName = metalSlug.charAt(0).toUpperCase() + metalSlug.slice(1);
+    return {
+      estimatedValue:    total,
+      unitPrice,
+      currency:          'PLN',
+      confidence:        'high',
+      source:            'metals.live + NBP USD/PLN',
+      suggestedCategory: 'Finanse',
+      aiCategory:        'Metale',
+      reasoning:         `${metalName}: ${spotUsd.toFixed(2)} USD/oz × kurs NBP ${usdPln.toFixed(4)} = ${unitPrice.toLocaleString('pl-PL')} PLN/oz`,
+    };
+  }
 
-  const aiCategory      = isMetal(ticker) ? 'Metale' : category;
-  const suggestedCategory = toDbCategory(aiCategory);
+  // ── Crypto (CoinGecko → PLN direct) ──────────────────────────────────────────
+  if (COINGECKO_IDS.has(id)) {
+    const plnPerCoin = await fetchCryptoPln(id, signal);
+    if (!plnPerCoin) return null;
+    const unitPrice  = Math.round(plnPerCoin);
+    const total      = Math.round(plnPerCoin * qty);
+    return {
+      estimatedValue:    total,
+      unitPrice,
+      currency:          'PLN',
+      confidence:        'high',
+      source:            'CoinGecko (PLN)',
+      suggestedCategory: 'Finanse',
+      aiCategory:        'Krypto',
+      reasoning:         `${assetId}: ${plnPerCoin.toLocaleString('pl-PL')} PLN/szt.`,
+    };
+  }
+
+  // ── Stocks / ETF (Twelve Data → USD, then convert; PLN for .WA) ──────────────
+  const [spotUsd, usdPln] = await Promise.all([
+    fetchStockUsd(assetId, signal),
+    isWA ? Promise.resolve(1) : getUsdPln(signal),
+  ]);
+  if (!spotUsd) return null;
+
+  const unitPrice = isWA
+    ? Math.round(spotUsd)
+    : Math.round(spotUsd * usdPln);
+  const total     = Math.round(unitPrice * qty);
+
+  const dbCategory  = toDbCategory(category);
+  const reasonPrice = isWA
+    ? `${spotUsd.toFixed(2)} PLN/szt. (GPW)`
+    : `${spotUsd.toFixed(2)} USD × kurs NBP ${usdPln.toFixed(4)} = ${unitPrice.toLocaleString('pl-PL')} PLN/szt.`;
 
   return {
-    estimatedValue:    totalValue,
-    unitPrice:         unitPricePln,
+    estimatedValue:    total,
+    unitPrice,
     currency:          'PLN',
     confidence:        'high',
-    source:            plnAsset
-                         ? `Yahoo Finance (${ticker})`
-                         : `Yahoo Finance (${ticker}) + NBP USD/PLN`,
-    suggestedCategory,
-    aiCategory,
-    reasoning,
-  };
-}
-
-// ─── Step 2B – Physical asset (manual price) ──────────────────────────────────
-
-function physicalResult(category: string): ValuationResult {
-  return {
-    estimatedValue:     0,
-    unitPrice:          0,
-    currency:           'PLN',
-    confidence:         'low',
-    source:             'Manualna wycena',
-    suggestedCategory:  toDbCategory(category),
-    aiCategory:         category || 'Inne',
-    reasoning:          'Wpisz szacowaną wartość rynkową tego przedmiotu (np. z Allegro/OLX).',
-    requiresManualPrice: true,
+    source:            isWA ? `Twelve Data (${assetId}, GPW)` : `Twelve Data (${assetId}) + NBP USD/PLN`,
+    suggestedCategory: dbCategory,
+    aiCategory:        category,
+    reasoning:         `${assetId}: ${reasonPrice}`,
   };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-const HARD_TIMEOUT_MS = 8_000; // leaves 2 s headroom for Vercel Hobby 10 s limit
+const HARD_TIMEOUT_MS = 8_000;
 
 export async function estimateValue(
   itemName: string,
@@ -288,47 +455,49 @@ export async function estimateValue(
     let cls: Classification;
     try {
       cls = await classifyAsset(itemName, controller.signal);
-      console.info(`[valuate] "${itemName}" → type=${cls.type} ticker=${cls.ticker} cat=${cls.category}`);
-    } catch (classifyErr) {
-      console.warn('[valuate] Classification failed → physical fallback:', classifyErr);
+      console.log(`[valuate] "${itemName}" → type=${cls.type} asset_id=${cls.asset_id} cat=${cls.category}`);
+    } catch (err) {
+      console.warn('[valuate] Classification failed → manual fallback:', err);
       return physicalResult('Inne');
     }
 
-    // ── Step 2B: Physical item ────────────────────────────────────────────────
-    if (cls.type === 'physical' || !cls.ticker) {
+    // ── Physical asset ───────────────────────────────────────────────────────
+    if (cls.type === 'physical' || !cls.asset_id) {
       return physicalResult(cls.category);
     }
 
-    // ── Step 2A: Financial instrument ────────────────────────────────────────
+    // ── Financial asset ──────────────────────────────────────────────────────
     try {
       const result = await valuateFinancial(
-        cls.ticker,
+        cls.asset_id,
         cls.category,
         qty,
         controller.signal,
       );
+
       if (result) {
-        console.info(`[valuate] Market OK → ${result.estimatedValue} PLN`);
+        console.log(`[valuate] WYNIK: ${result.estimatedValue} PLN (${result.source})`);
         return result;
       }
-      // Yahoo Finance returned null (bad ticker, market closed, etc.)
-      console.warn(`[valuate] No price for "${cls.ticker}" → manual fallback`);
-      return {
-        ...physicalResult(cls.category),
-        reasoning: `Nie udało się pobrać ceny dla tickera "${cls.ticker}" (Yahoo Finance). Wpisz wartość ręcznie.`,
-      };
+
+      // API returned null (rate limit, unknown ticker, API down, etc.)
+      const noApiKey = cls.asset_id && !COINGECKO_IDS.has(cls.asset_id.toLowerCase()) && !process.env.TWELVE_DATA_API_KEY;
+      const reason = noApiKey
+        ? `Brak klucza API Twelve Data (${cls.asset_id}). Dodaj TWELVE_DATA_API_KEY do .env.local lub wpisz wartość ręcznie.`
+        : `Nie udało się pobrać ceny dla "${cls.asset_id}". Wpisz wartość ręcznie.`;
+
+      console.warn(`[valuate] No price for "${cls.asset_id}"`, noApiKey ? '(missing API key)' : '');
+      return physicalResult(cls.category, reason);
+
     } catch (marketErr) {
-      console.warn(`[valuate] Market error for "${cls.ticker}":`, marketErr);
-      return {
-        ...physicalResult(cls.category),
-        reasoning: `Błąd pobierania ceny (${cls.ticker}). Wpisz wartość ręcznie.`,
-      };
+      console.warn(`[valuate] Market error for "${cls.asset_id}":`, marketErr);
+      return physicalResult(cls.category, `Błąd pobierania ceny (${cls.asset_id}). Wpisz wartość ręcznie.`);
     }
 
   } catch (err) {
     const isAbort = err instanceof Error && (err.name === 'AbortError' || controller.signal.aborted);
     console.error(`[valuate] ${isAbort ? 'TIMEOUT' : 'ERROR'} for "${itemName}":`, err);
-    return physicalResult('Inne');
+    return physicalResult('Inne', isAbort ? 'Przekroczono czas (8 s). Spróbuj ponownie.' : undefined);
   } finally {
     clearTimeout(timer);
   }
