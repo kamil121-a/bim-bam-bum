@@ -61,9 +61,24 @@ export function buildTavilyQuery(raw: string): string {
   }
 
   // US stocks: NVDA.US → NVDA
+  // For single-letter tickers (e.g. "O" = Realty Income), add "stock" hint
   if (t.endsWith('.US')) {
     const sym = t.slice(0, -3);
-    return `Yahoo Finance ${sym} stock price current 2026`;
+    const extra = sym.length <= 2 ? ' NYSE stock' : '';
+    return `Yahoo Finance ${sym}${extra} stock price current USD 2026`;
+  }
+
+  // UK / London Stock Exchange: IWDA.UK → IWDA.L (Yahoo Finance LSE format)
+  // These are often ETFs or international stocks priced in GBP or USD
+  if (t.endsWith('.UK')) {
+    const sym = t.slice(0, -3);
+    return `Yahoo Finance ${sym}.L ${sym} ETF stock price GBP USD current 2026`;
+  }
+
+  // European stocks with .DE / .FR / .IT / .ES / .NL etc.
+  if (/\.[A-Z]{2}$/.test(t) && !t.endsWith('.PL') && !t.endsWith('.US') && !t.endsWith('.UK')) {
+    // Generic European exchange
+    return `Yahoo Finance ${t} stock price EUR current 2026`;
   }
 
   // Crypto – natural language + Yahoo Finance ticker for better search hits
@@ -90,17 +105,21 @@ export function isForeignTicker(raw: string): boolean {
   return t.endsWith('.US') || CRYPTO_SET.has(t) || METAL_SET.has(t);
 }
 
-// ─── NBP USD/PLN (official Polish central bank) ───────────────────────────────
+// ─── NBP exchange rates (official Polish central bank) ───────────────────────
 
-export async function fetchNbpUsdPln(): Promise<number> {
+async function fetchNbpRate(currency: 'usd' | 'gbp' | 'eur'): Promise<number> {
   const res = await fetch(
-    'https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json',
+    `https://api.nbp.pl/api/exchangerates/rates/a/${currency}/?format=json`,
     { signal: AbortSignal.timeout(5_000) },
   );
-  if (!res.ok) throw new Error(`NBP HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`NBP HTTP ${res.status} for ${currency.toUpperCase()}`);
   const data = await res.json() as { rates: { mid: number }[] };
   return data.rates[0].mid;
 }
+
+export async function fetchNbpUsdPln(): Promise<number> { return fetchNbpRate('usd'); }
+export async function fetchNbpGbpPln(): Promise<number> { return fetchNbpRate('gbp'); }
+export async function fetchNbpEurPln(): Promise<number> { return fetchNbpRate('eur'); }
 
 // ─── Tavily search ────────────────────────────────────────────────────────────
 
@@ -162,17 +181,20 @@ export async function extractMarketPrice(
     `(Last Price / Current Price) dla aktywa: "${ticker}" ` +
     `z dostarczonych wyników wyszukiwania dla maja 2026 roku.\n\n` +
     `ŻELAZNE ZASADY selekcji danych:\n` +
-    `1. Szukaj wyłącznie aktualnego kursu (np. "912.40", "452.10").\n` +
+    `1. Szukaj wyłącznie aktualnego kursu (np. "912.40", "452.10", "80.25").\n` +
     `2. BEZWZGLĘDNIE IGNORUJ: kapitalizację rynkową (miliardy/tryliony), wolumen obrotu (Volume), ` +
     `zmianę procentową (np. +1.5%), ceny docelowe analityków (Target Price) ` +
     `oraz ceny historyczne sprzed miesięcy.\n` +
     `3. Kontekst walutowy:\n` +
-    `   - Akcje USA (.US), krypto (BTC), kruszce (złoto/srebro) z ceną przy znaku '$' lub 'USD' → "currency": "USD"\n` +
-    `   - Polska spółka (.WA / .PL) z ceną przy 'zł' lub 'PLN' → "currency": "PLN"\n` +
+    `   - Akcje USA (.US), krypto (BTC), kruszce (złoto/srebro) – cena przy '$' lub 'USD' → "currency": "USD"\n` +
+    `   - Polska spółka (.WA / .PL) – cena przy 'zł' lub 'PLN' → "currency": "PLN"\n` +
+    `   - Spółki UK, LSE (.UK / .L) – cena przy '£' lub 'GBP' → "currency": "GBP"\n` +
+    `     WAŻNE: jeśli cena UK jest w pensach (GBX, np. 8023p), podziel przez 100 aby otrzymać GBP.\n` +
+    `   - Spółki europejskie (.DE / .FR / .AS / .EU) – cena przy '€' lub 'EUR' → "currency": "EUR"\n` +
     `4. Jeśli nie ma jasnej, niepodważalnej aktualnej ceny giełdowej – ` +
     `NIE ZGADUJ, nie halucynuj. Zwróć "success": false.\n\n` +
     `Zwróć WYŁĄCZNIE surowy JSON (zero markdown, zero \`\`\`json):\n` +
-    `{ "success": true, "currency": "USD", "price": 912.40 }\n` +
+    `{ "success": true, "currency": "USD"|"PLN"|"GBP"|"EUR", "price": <liczba> }\n` +
     `lub gdy brak danych:\n` +
     `{ "success": false, "currency": "USD", "price": 0 }`;
 
@@ -194,7 +216,9 @@ export async function extractMarketPrice(
     const parsed   = JSON.parse(raw) as { success?: boolean; currency?: string; price?: unknown };
     const success  = parsed.success === true;
     const price    = Number(parsed.price);   // explicit cast – guards against string prices
-    const currency = parsed.currency === 'PLN' ? 'PLN' : 'USD';
+    const currency = (['PLN', 'USD', 'GBP', 'EUR'] as const).includes(parsed.currency as never)
+      ? (parsed.currency as 'PLN' | 'USD' | 'GBP' | 'EUR')
+      : 'USD';
 
     // Honour success flag – if AI found no clean price, refuse to guess
     if (!success || !isFinite(price) || price <= 0) {
@@ -202,16 +226,27 @@ export async function extractMarketPrice(
       return null;
     }
 
-    // Convert USD → PLN using official NBP rate (never rely on AI's exchange rate)
-    if (currency === 'USD') {
-      const usdPln   = await fetchNbpUsdPln();
-      const pricePln = price * usdPln;
-      console.log(`[NBP] ${price} USD × ${usdPln.toFixed(4)} = ${pricePln.toFixed(2)} PLN`);
-      return { unitPricePLN: pricePln, reasoning: `${ticker} @ ${price} USD (NBP: ${usdPln.toFixed(4)})` };
+    // PLN – no conversion needed
+    if (currency === 'PLN') {
+      return { unitPricePLN: price, reasoning: `${ticker} @ ${price} PLN` };
     }
 
-    // PLN price – Polish stocks quoted directly on Yahoo Finance .WA
-    return { unitPricePLN: price, reasoning: `${ticker} @ ${price} PLN` };
+    // All other currencies → convert to PLN via official NBP rates
+    let rate: number;
+    if (currency === 'GBP') {
+      rate = await fetchNbpGbpPln();
+    } else if (currency === 'EUR') {
+      rate = await fetchNbpEurPln();
+    } else {
+      rate = await fetchNbpUsdPln();
+    }
+
+    const pricePln = price * rate;
+    console.log(`[NBP] ${price} ${currency} × ${rate.toFixed(4)} = ${pricePln.toFixed(2)} PLN`);
+    return {
+      unitPricePLN: pricePln,
+      reasoning:    `${ticker} @ ${price} ${currency} × ${rate.toFixed(4)} NBP = ${pricePln.toFixed(2)} PLN`,
+    };
 
   } catch (err) {
     console.error('[extractMarketPrice] error:', err instanceof Error ? err.message : err);

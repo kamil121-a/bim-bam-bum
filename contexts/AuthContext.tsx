@@ -95,20 +95,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      */
     const init = async () => {
       // Safety net: if getUser() never resolves (slow/blocked Supabase or stale token),
-      // force loading=false after 6 s so the app doesn't hang forever.
+      // force loading=false after 8 s so the app doesn't hang forever.
+      // timedOut flag prevents the try-block from re-setting user after the timer fired.
+      let timedOut = false;
       const safetyTimer = setTimeout(() => {
         if (!mounted) return;
-        console.warn('[auth] init() timed out after 6 s – clearing session and unblocking UI');
+        timedOut = true;
+        console.warn('[auth] init() timed out after 8 s – clearing session and unblocking UI');
         supabase.auth.signOut().catch(() => {});
         setUser(null);
         setLoading(false);
-      }, 6_000);
+      }, 8_000);
 
       try {
         const { data: { user: serverUser }, error } = await supabase.auth.getUser();
         clearTimeout(safetyTimer);
 
-        if (!mounted) return;
+        if (!mounted || timedOut) return;  // safety timer already ran – don't overwrite
 
         if (error || !serverUser) {
           if (error) {
@@ -157,6 +160,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
+          // Keep loading=true while fetchProfile is in-flight.
+          // Without this, dashboard sees (loading=false, user=null) for a brief
+          // moment and immediately redirects back to /login – the "login loop" bug.
+          if (mounted) setLoading(true);
           const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
           if (mounted) { setUser(profile); setLoading(false); }
         } else {
