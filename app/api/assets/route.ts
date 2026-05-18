@@ -83,25 +83,41 @@ export async function POST(request: NextRequest) {
   // ── 3. Insert asset ──────────────────────────────────────────────────────────
   const admin = createSupabaseAdminClient();
 
-  const payload = {
-    id:            crypto.randomUUID(),
-    user_id:       user.id,
-    name:          name.trim(),
-    // Preserved forever – user may rename the asset, but this stays as the AI-generated label
-    original_name: name.trim(),
+  const trimmedName = name.trim();
+
+  // Base payload without optional columns that may not exist if migration wasn't run
+  const basePayload = {
+    id:       crypto.randomUUID(),
+    user_id:  user.id,
+    name:     trimmedName,
     category,
-    value:         Math.round(value),
-    quantity:      parseFloat(quantity.toFixed(8)),
-    reasoning:     reasoning?.trim() ?? null,
+    value:    Math.round(value),
+    quantity: parseFloat(quantity.toFixed(8)),
+    reasoning: reasoning?.trim() ?? null,
   };
 
-  console.log('[POST /api/assets] Inserting:', { ...payload, user_id: '[redacted]' });
+  // Include original_name (always a non-empty string equal to the initial name).
+  // If the column doesn't exist yet (migration pending), we fall back to basePayload.
+  const fullPayload = { ...basePayload, original_name: trimmedName };
 
-  const { data: asset, error: insertError } = await admin
+  console.log('[POST /api/assets] Inserting:', { ...fullPayload, user_id: '[redacted]' });
+
+  let { data: asset, error: insertError } = await admin
     .from('assets')
-    .insert(payload)
+    .insert(fullPayload)
     .select()
     .single();
+
+  // Graceful fallback: if original_name column doesn't exist (migration not yet applied),
+  // retry without it so the asset is always saved.
+  if (insertError && /original_name/.test(insertError.message)) {
+    console.warn('[POST /api/assets] original_name column missing – retrying without it');
+    ({ data: asset, error: insertError } = await admin
+      .from('assets')
+      .insert(basePayload)
+      .select()
+      .single());
+  }
 
   if (insertError) {
     console.error('[POST /api/assets] Supabase insert error:', {

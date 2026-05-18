@@ -277,13 +277,18 @@ ZASADY IDENTYFIKATORÓW (asset_id):
 • Fizyczne przedmioty (elektronika, samochód, meble, zegarek itp.) → type: "physical", asset_id: null
 
 ══════════════════════════════════════════════════════
-KRYTYCZNA ZASADA – POLSKA GIEŁDA (GPW WARSZAWA):
-Jeśli użytkownik wpisuje JAKĄKOLWIEK polską spółkę notowaną na GPW,
-BEZWZGLĘDNIE dodaj sufiks .WA do tickera (cena jest już w PLN, nie USD).
-Dotyczy KAŻDEJ polskiej spółki – nawet tej spoza poniższej listy.
-Jeśli nie znasz dokładnego tickera, ZAWSZE zakończ go ".WA".
+ZASADA SUFIKSU .WA – CZYTAJ UWAŻNIE:
 
-Znane spółki GPW:
+Sufiks .WA dodawaj WYŁĄCZNIE do spółek, które:
+  - zostały ZAŁOŻONE W POLSCE i
+  - są notowane na GPW Warszawa jako GŁÓWNEJ giełdzie.
+
+Dla spółek ZAGRANICZNYCH (USA, Europa, Azja) używaj standardowego
+tickera tej giełdy – BEZ jakichkolwiek końcówek .WA.
+Jeśli nie znasz tickera zagranicznej spółki, użyj jej oficjalnego
+symbolu z NYSE / NASDAQ (bez .WA).
+
+Znane polskie spółki GPW (z .WA):
 • Orlen / PKN Orlen  → "PKN.WA"
 • PKO BP             → "PKO.WA"
 • CD Projekt         → "CDR.WA"
@@ -296,14 +301,21 @@ Znane spółki GPW:
 • Cyfrowy Polsat     → "CPS.WA"
 • JSW                → "JSW.WA"
 • CCC                → "CCC.WA"
-• Santander PL       → "SPL.WA"
 • Pekao              → "PEO.WA"
 • Bank Millennium    → "MIL.WA"
 • Budimex            → "BDX.WA"
-• Eurocash           → "EUR.WA"
 • Kruk               → "KRU.WA"
-• Asseco              → "ACP.WA"
-• Lotos / MOL Polska → "PKN.WA"   (po fuzji z Orlenem)
+• Żabka              → "ZAB.WA"
+
+Znane zagraniczne spółki (BEZ .WA):
+• McDonald's         → "MCD"      (USA, NYSE)
+• Coca-Cola          → "KO"       (USA, NYSE)
+• Nike               → "NKE"      (USA, NYSE)
+• Walmart            → "WMT"      (USA, NYSE)
+• Johnson & Johnson  → "JNJ"      (USA, NYSE)
+• Berkshire          → "BRK.B"    (USA, NYSE)
+• LVMH               → "MC"       (Francja, Euronext)
+• SAP                → "SAP"      (Niemcy, NYSE ADR)
 ══════════════════════════════════════════════════════
 
 PRZYKŁADY:
@@ -312,6 +324,8 @@ PRZYKŁADY:
 "bitcoin"             → {"type":"financial","asset_id":"bitcoin","category":"Krypto"}
 "S&P 500 ETF"         → {"type":"financial","asset_id":"SPY","category":"Giełda"}
 "Apple 3 akcje"       → {"type":"financial","asset_id":"AAPL","category":"Giełda"}
+"McDonald's"          → {"type":"financial","asset_id":"MCD","category":"Giełda"}
+"Coca-Cola"           → {"type":"financial","asset_id":"KO","category":"Giełda"}
 "Orlen"               → {"type":"financial","asset_id":"PKN.WA","category":"Giełda"}
 "PKO BP 20 akcji"     → {"type":"financial","asset_id":"PKO.WA","category":"Giełda"}
 "Allegro"             → {"type":"financial","asset_id":"ALE.WA","category":"Giełda"}
