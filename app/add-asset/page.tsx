@@ -16,64 +16,67 @@ import {
   RotateCcw,
   ChevronDown,
   Lock,
+  PenLine,
 } from 'lucide-react';
 
 type Step = 'input' | 'valuating' | 'confirm' | 'saving' | 'saved';
 
 interface ValuationResult {
-  estimatedValue: number;
-  unitPrice: number;
-  currency: string;
-  confidence: 'high' | 'medium' | 'low';
-  source: string;
-  suggestedCategory: AssetCategory;
-  aiCategory: string;
-  reasoning: string;
+  estimatedValue:     number;
+  unitPrice:          number;
+  currency:           string;
+  confidence:         'high' | 'medium' | 'low';
+  source:             string;
+  suggestedCategory:  AssetCategory;
+  aiCategory:         string;
+  reasoning:          string;
+  requiresManualPrice?: boolean;
 }
 
 const CONFIDENCE_LABEL: Record<string, string> = {
-  high: 'Wysoka',
+  high:   'Wysoka (giełdowa)',
   medium: 'Średnia',
-  low: 'Niska',
+  low:    'Manualna',
 };
 
 const CONFIDENCE_COLOR: Record<string, string> = {
-  high: 'text-emerald-600 bg-emerald-50 border-emerald-200',
+  high:   'text-emerald-600 bg-emerald-50 border-emerald-200',
   medium: 'text-amber-600 bg-amber-50 border-amber-200',
-  low: 'text-red-600 bg-red-50 border-red-200',
+  low:    'text-violet-600 bg-violet-50 border-violet-200',
 };
 
 const EXAMPLES: Array<{ label: string; name: string; qty: string }> = [
-  { label: 'S&P 500 ETF', name: 'S&P 500 ETF', qty: '10' },
-  { label: 'Bitcoin', name: 'Bitcoin', qty: '0.5' },
-  { label: 'Złoto', name: 'Złoto', qty: '10' },
-  { label: 'Srebro 1 uncja', name: 'Srebro', qty: '5' },
-  { label: 'iPhone 15', name: 'iPhone 15 używany', qty: '1' },
-  { label: 'MacBook Pro', name: 'MacBook Pro M3', qty: '1' },
-  { label: 'PS5', name: 'PlayStation 5', qty: '1' },
-  { label: 'Mieszkanie', name: 'Mieszkanie 50m² Warszawa', qty: '1' },
+  { label: 'S&P 500 ETF',  name: 'S&P 500 ETF',          qty: '10'   },
+  { label: 'Bitcoin',      name: 'Bitcoin',               qty: '0.5'  },
+  { label: 'Złoto (oz)',   name: 'Złoto',                 qty: '1'    },
+  { label: 'Srebro (oz)',  name: 'Srebro',                qty: '5'    },
+  { label: 'Apple',        name: 'Apple akcje',           qty: '3'    },
+  { label: 'CD Projekt',   name: 'CD Projekt',            qty: '10'   },
+  { label: 'iPhone 15',   name: 'iPhone 15 używany',     qty: '1'    },
+  { label: 'MacBook Pro',  name: 'MacBook Pro M4',        qty: '1'    },
+  { label: 'Mieszkanie',   name: 'Mieszkanie 50m² Warszawa', qty: '1' },
 ];
 
 export default function AddAssetPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
 
-  const [step, setStep] = useState<Step>('input');
-  const [name, setName] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [valuation, setValuation] = useState<ValuationResult | null>(null);
-  const [category, setCategory] = useState<AssetCategory>('Inne');
-  const [error, setError] = useState('');
+  const [step,        setStep]        = useState<Step>('input');
+  const [name,        setName]        = useState('');
+  const [quantity,    setQuantity]    = useState('1');
+  const [valuation,   setValuation]   = useState<ValuationResult | null>(null);
+  const [category,    setCategory]    = useState<AssetCategory>('Inne');
+  const [manualValue, setManualValue] = useState('');   // only for physical items
+  const [error,       setError]       = useState('');
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
   }, [user, loading, router]);
 
+  // ── Valuate ─────────────────────────────────────────────────────────────────
+
   const handleValuate = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Guard: button is already disabled while valuating, but this prevents
-    // any theoretical double-fire (e.g. keyboard Enter + mouse click race).
     if (step === 'valuating') return;
 
     if (!name.trim() || name.trim().length < 2) {
@@ -91,9 +94,9 @@ export default function AddAssetPage() {
 
     try {
       const res = await fetch('/api/valuate', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), quantity: qty }),
+        body:    JSON.stringify({ name: name.trim(), quantity: qty }),
       });
 
       if (!res.ok) {
@@ -102,24 +105,12 @@ export default function AddAssetPage() {
       }
 
       const data: ValuationResult = await res.json();
-
-      // API returns estimatedValue = 0 when OpenAI fails or times out.
-      // Show an error and stay on the input step so the user can retry.
-      if (data.estimatedValue === 0) {
-        setError(
-          data.reasoning.startsWith('Nie udało się') || data.reasoning.startsWith('Błąd') || data.reasoning.startsWith('Przekroczono')
-            ? data.reasoning
-            : 'Nie udało się uzyskać wyceny. Spróbuj ponownie lub sprecyzuj nazwę.',
-        );
-        setStep('input');
-        return;
-      }
-
       setValuation(data);
       setCategory(data.suggestedCategory);
+      setManualValue('');   // reset manual input on each new valuation
       setStep('confirm');
     } catch (err) {
-      console.error('[add-asset] valuate fetch error:', err);
+      console.error('[add-asset] valuate error:', err);
       setError(
         err instanceof Error
           ? err.message
@@ -129,34 +120,46 @@ export default function AddAssetPage() {
     }
   };
 
+  // ── Save ────────────────────────────────────────────────────────────────────
+
   const handleConfirm = async () => {
-    if (!valuation || valuation.estimatedValue <= 0) {
-      setError('Brak wyceny do zatwierdzenia.');
-      return;
+    if (!valuation || step === 'saving') return;
+
+    // Resolve final value: market price (locked) OR user's manual entry
+    let finalValue: number;
+    if (valuation.requiresManualPrice) {
+      finalValue = parseFloat(manualValue);
+      if (isNaN(finalValue) || finalValue <= 0) {
+        setError('Podaj szacowaną wartość przedmiotu (musi być > 0 PLN).');
+        return;
+      }
+    } else {
+      finalValue = valuation.estimatedValue;
+      if (finalValue <= 0) {
+        setError('Brak wyceny do zatwierdzenia.');
+        return;
+      }
     }
-    if (step === 'saving') return; // prevent double-click
 
     setError('');
     setStep('saving');
 
     try {
       const res = await fetch('/api/assets', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name.trim(),
+        body:    JSON.stringify({
+          name:      name.trim(),
           category,
-          value: valuation.estimatedValue,
-          quantity: parseFloat(quantity),
+          value:     Math.round(finalValue),
+          quantity:  parseFloat(quantity),
           reasoning: valuation.reasoning,
         }),
       });
 
       const d = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         const msg = (d as { error?: string }).error ?? `Błąd zapisu (HTTP ${res.status}).`;
-        console.error('[add-asset] save error:', msg);
         setError(msg);
         setStep('confirm');
         return;
@@ -164,23 +167,31 @@ export default function AddAssetPage() {
 
       setStep('saved');
     } catch (err) {
-      console.error('[add-asset] save fetch error:', err);
+      console.error('[add-asset] save error:', err);
       setError('Błąd połączenia z bazą danych. Spróbuj ponownie.');
       setStep('confirm');
     }
   };
+
+  // ── Reset ────────────────────────────────────────────────────────────────────
 
   const handleReset = () => {
     setStep('input');
     setName('');
     setQuantity('1');
     setValuation(null);
+    setManualValue('');
     setError('');
   };
 
-  const qty = parseFloat(quantity) || 1;
-  const showBreakdown =
-    valuation && valuation.unitPrice > 0 && qty !== 1;
+  // ── Derived ──────────────────────────────────────────────────────────────────
+
+  const qty            = parseFloat(quantity) || 1;
+  const isManual       = valuation?.requiresManualPrice === true;
+  const finalValue     = isManual
+                           ? (parseFloat(manualValue) || 0)
+                           : (valuation?.estimatedValue ?? 0);
+  const showBreakdown  = !isManual && valuation && valuation.unitPrice > 0 && qty !== 1;
 
   if (loading) {
     return (
@@ -197,15 +208,16 @@ export default function AddAssetPage() {
     <>
       <Navigation />
       <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-gray-900">Dodaj nowe aktywo</h2>
           <p className="text-gray-500 mt-1">
-            AI wyceni wartość – Ty tylko potwierdzasz. Kwota jest blokowana, aby
-            ranking był sprawiedliwy.
+            Akcje i kryptowaluty wyceniamy giełdowo (Yahoo Finance).
+            Przedmioty fizyczne – wpisujesz cenę sam.
           </p>
         </div>
 
-        {/* ── Step: Input ── */}
+        {/* ── Step: Input / Valuating ── */}
         {(step === 'input' || step === 'valuating') && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
             <form onSubmit={handleValuate} className="space-y-5">
@@ -242,14 +254,14 @@ export default function AddAssetPage() {
                     step="any"
                     value={quantity}
                     onChange={e => setQuantity(e.target.value)}
-                    placeholder="np. 1, 2.5, 10"
+                    placeholder="np. 1, 2.5, 0.5"
                     className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
                     disabled={step === 'valuating'}
                   />
                 </div>
                 <p className="text-xs text-gray-400 mt-1.5">
-                  Dla kruszców: uncje lub gramy. Dla crypto/akcji: liczba sztuk.
-                  Dla przedmiotów: 1.
+                  Akcje / crypto: liczba sztuk. Metale szlachetne: <strong>uncje trojańskie (oz)</strong>.
+                  Przedmioty fizyczne: 1.
                 </p>
               </div>
 
@@ -267,19 +279,19 @@ export default function AddAssetPage() {
                 {step === 'valuating' ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Trwa wycenianie przez AI…</span>
+                    <span>Klasyfikuję i pobieram kurs…</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Wycena AI</span>
+                    <span>Wycena</span>
                   </>
                 )}
               </button>
 
               {step === 'valuating' && (
                 <p className="text-center text-xs text-gray-400 animate-pulse">
-                  Pobieranie aktualnych kursów rynkowych, może potrwać kilka sekund…
+                  AI klasyfikuje aktywo, następnie kod pobiera aktualny kurs giełdowy…
                 </p>
               )}
             </form>
@@ -294,10 +306,7 @@ export default function AddAssetPage() {
                   <button
                     key={ex.label}
                     type="button"
-                    onClick={() => {
-                      setName(ex.name);
-                      setQuantity(ex.qty);
-                    }}
+                    onClick={() => { setName(ex.name); setQuantity(ex.qty); }}
                     disabled={step === 'valuating'}
                     className="px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors"
                   >
@@ -309,7 +318,7 @@ export default function AddAssetPage() {
           </div>
         )}
 
-        {/* ── Step: Confirm ── */}
+        {/* ── Step: Confirm / Saving ── */}
         {(step === 'confirm' || step === 'saving') && valuation && (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -323,15 +332,30 @@ export default function AddAssetPage() {
                         {qty} × {formatPLN(valuation.unitPrice)} za szt.
                       </p>
                     )}
-                    <p className="text-sm text-gray-500 mb-1">Łączna wartość wg AI</p>
-                    <p className="text-4xl font-bold text-indigo-700">
-                      {formatPLN(valuation.estimatedValue)}
-                    </p>
+
+                    {isManual ? (
+                      <>
+                        <p className="text-sm text-gray-500 mb-1 flex items-center gap-1.5">
+                          <PenLine className="w-3.5 h-3.5" />
+                          Wprowadź wartość ręcznie
+                        </p>
+                        <p className="text-3xl font-bold text-violet-700">
+                          {finalValue > 0 ? formatPLN(finalValue) : '— PLN'}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-gray-500 mb-1">Aktualna wartość giełdowa</p>
+                        <p className="text-4xl font-bold text-indigo-700">
+                          {formatPLN(valuation.estimatedValue)}
+                        </p>
+                      </>
+                    )}
                   </div>
                   <span
                     className={`shrink-0 mt-1 px-3 py-1 rounded-full text-xs font-semibold border ${CONFIDENCE_COLOR[valuation.confidence]}`}
                   >
-                    Pewność: {CONFIDENCE_LABEL[valuation.confidence]}
+                    {CONFIDENCE_LABEL[valuation.confidence]}
                   </span>
                 </div>
                 <p className="text-sm text-gray-500 mt-3 italic">{valuation.reasoning}</p>
@@ -339,7 +363,7 @@ export default function AddAssetPage() {
               </div>
 
               <div className="px-8 py-6 space-y-5">
-                {/* Name + quantity summary */}
+                {/* Asset summary */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     Aktywo
@@ -349,7 +373,7 @@ export default function AddAssetPage() {
                   </p>
                 </div>
 
-                {/* Category – only editable field */}
+                {/* Category */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
                     Kategoria
@@ -362,9 +386,7 @@ export default function AddAssetPage() {
                       className="w-full appearance-none px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 bg-white pr-10"
                     >
                       {ASSET_CATEGORIES.map(cat => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
+                        <option key={cat} value={cat}>{cat}</option>
                       ))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -376,28 +398,50 @@ export default function AddAssetPage() {
                         AI: {valuation.aiCategory}
                       </span>
                     )}
-                    <span className="text-xs text-gray-400">sugestia AI</span>
                   </div>
                 </div>
 
-                {/* Value – READONLY, locked */}
+                {/* Value field – LOCKED for market, EDITABLE for physical */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Wycena końcowa
+                    {isManual ? 'Twoja wycena (PLN)' : 'Wycena końcowa'}
                   </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      readOnly
-                      value={formatPLN(valuation.estimatedValue)}
-                      className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed select-none"
-                    />
-                    <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
-                    <Lock className="w-3 h-3" />
-                    Kwota jest ustalana przez AI – nie można jej zmienić ręcznie.
-                  </p>
+
+                  {isManual ? (
+                    <>
+                      <input
+                        type="number"
+                        min="1"
+                        step="any"
+                        value={manualValue}
+                        onChange={e => setManualValue(e.target.value)}
+                        placeholder="Wpisz szacowaną wartość w PLN (np. 3500)"
+                        className="w-full px-4 py-3 rounded-xl border border-violet-200 bg-violet-50 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
+                        disabled={step === 'saving'}
+                        autoFocus
+                      />
+                      <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                        <PenLine className="w-3 h-3" />
+                        Wycena manualna – sprawdź aktualne ceny np. na Allegro / OLX.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          readOnly
+                          value={formatPLN(valuation.estimatedValue)}
+                          className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed select-none"
+                        />
+                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                        <Lock className="w-3 h-3" />
+                        Kwota pochodzi z giełdy – nie można jej zmienić ręcznie.
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 {error && (
@@ -420,8 +464,12 @@ export default function AddAssetPage() {
               </button>
               <button
                 onClick={handleConfirm}
-                disabled={step === 'saving' || valuation.estimatedValue <= 0}
-                className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold rounded-xl transition-colors shadow-md shadow-emerald-200"
+                disabled={
+                  step === 'saving' ||
+                  (isManual && (parseFloat(manualValue) || 0) <= 0) ||
+                  (!isManual && valuation.estimatedValue <= 0)
+                }
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-emerald-200"
               >
                 {step === 'saving' ? (
                   <>
@@ -451,7 +499,7 @@ export default function AddAssetPage() {
               <strong className="text-gray-800">{name}</strong>
             </p>
             <p className="text-3xl font-bold text-indigo-700 my-3">
-              {formatPLN(valuation.estimatedValue)}
+              {formatPLN(finalValue)}
             </p>
             <p className="text-sm text-gray-400 mb-8">dodane do Twojego majątku</p>
             <div className="flex gap-3 justify-center">
@@ -470,6 +518,7 @@ export default function AddAssetPage() {
             </div>
           </div>
         )}
+
       </main>
     </>
   );
