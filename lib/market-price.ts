@@ -33,11 +33,20 @@ const CRYPTO_YAHOO: Record<string, string> = {
   MATIC: 'MATIC-USD',SHIB:  'SHIB-USD', TON:   'TON-USD',
 };
 
-const METAL_YAHOO: Record<string, string> = {
-  GOLD:     'GC=F',  XAU:      'GC=F',  ZLOTO: 'GC=F',  'ZŁOTO': 'GC=F',
-  SILVER:   'SI=F',  XAG:      'SI=F',  SREBRO:'SI=F',
-  PLATINUM: 'PL=F',  XPT:      'PL=F',
-  PALLADIUM:'PA=F',  XPD:      'PA=F',
+// For metals we use natural-language Tavily queries (not futures symbols like GC=F
+// which search engines don't resolve well). The label is what goes into the query.
+const METAL_QUERY: Record<string, string> = {
+  GOLD:      'gold XAU price per ounce USD today',
+  XAU:       'gold XAU price per ounce USD today',
+  ZLOTO:     'gold XAU cena za uncję USD dziś',
+  'ZŁOTO':   'gold XAU cena za uncję USD dziś',
+  SILVER:    'silver XAG price per ounce USD today',
+  XAG:       'silver XAG price per ounce USD today',
+  SREBRO:    'silver XAG cena za uncję USD dziś',
+  PLATINUM:  'platinum XPT price per ounce USD today',
+  XPT:       'platinum XPT price per ounce USD today',
+  PALLADIUM: 'palladium XPD price per ounce USD today',
+  XPD:       'palladium XPD price per ounce USD today',
 };
 
 // ─── Tavily query builder → Yahoo Finance only ────────────────────────────────
@@ -57,24 +66,24 @@ export function buildTavilyQuery(raw: string): string {
     return `Yahoo Finance ${sym} stock price current 2026`;
   }
 
-  // Crypto
+  // Crypto – natural language + Yahoo Finance ticker for better search hits
   if (CRYPTO_YAHOO[t]) {
-    return `Yahoo Finance ${CRYPTO_YAHOO[t]} price current 2026`;
+    return `${CRYPTO_YAHOO[t]} Yahoo Finance current price USD 2026`;
   }
 
-  // Precious metals (Yahoo futures)
-  if (METAL_YAHOO[t]) {
-    return `Yahoo Finance ${METAL_YAHOO[t]} price current 2026`;
+  // Precious metals – natural language (GC=F / SI=F not searchable by Tavily)
+  if (METAL_QUERY[t]) {
+    return `${METAL_QUERY[t]} Yahoo Finance investing.com 2026`;
   }
 
-  // Fallback: any user input (e.g. "Złoto", bare "TSLA", Polish company name)
+  // Fallback: any user input (e.g. bare "TSLA", Polish company name)
   return `Yahoo Finance ${raw} aktualna cena kurs giełda 2026`;
 }
 
 // ─── isForeignTicker helper (still needed for callers) ───────────────────────
 
 const CRYPTO_SET = new Set(Object.keys(CRYPTO_YAHOO));
-const METAL_SET  = new Set(Object.keys(METAL_YAHOO));
+const METAL_SET  = new Set(Object.keys(METAL_QUERY));
 
 export function isForeignTicker(raw: string): boolean {
   const t = raw.trim().toUpperCase();
@@ -104,7 +113,7 @@ export async function searchTavilyMarket(query: string): Promise<string | null> 
   try {
     const res = await fetch('https://api.tavily.com/search', {
       method:  'POST',
-      signal:  AbortSignal.timeout(7_000),
+      signal:  AbortSignal.timeout(5_000),  // 5 s: leaves ~4 s for OpenAI + NBP within Vercel's 10 s limit
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key:        apiKey,
