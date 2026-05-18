@@ -22,18 +22,20 @@ interface MappedTicker {
   aiCategory:  string;
 }
 
+// Stooq crypto format: "btc-usd" (hyphen-separated pair)
 const CRYPTO_TO_STOOQ: Record<string, string> = {
-  BTC:  'btcusd',  ETH:  'ethusd',  SOL:  'solusd',
-  XRP:  'xrpusd',  ADA:  'adausd',  DOGE: 'dogeusd',
-  BNB:  'bnbusd',  LTC:  'ltcusd',  DOT:  'dotusd',
-  AVAX: 'avaxusd', LINK: 'linkusd', ATOM: 'atomusd',
-  XLM:  'xlmusd',  NEAR: 'nearusd', UNI:  'uniusd',
+  BTC:  'btc-usd',  ETH:  'eth-usd',  SOL:  'sol-usd',
+  XRP:  'xrp-usd',  ADA:  'ada-usd',  DOGE: 'doge-usd',
+  BNB:  'bnb-usd',  LTC:  'ltc-usd',  DOT:  'dot-usd',
+  AVAX: 'avax-usd', LINK: 'link-usd', ATOM: 'atom-usd',
+  XLM:  'xlm-usd',  NEAR: 'near-usd', UNI:  'uni-usd',
 };
 
+// Stooq metals format: "XAUUSD" (concatenated pair, uppercase)
 const METAL_TO_STOOQ: Record<string, string> = {
-  GOLD:     'xauusd', XAU:      'xauusd',
-  SILVER:   'xagusd', XAG:      'xagusd',
-  PLATINUM: 'xptusd', PALLADIUM:'xpdusd',
+  GOLD:     'xauusd', XAU:       'xauusd', ZLOTO: 'xauusd',
+  SILVER:   'xagusd', XAG:       'xagusd', SREBRO: 'xagusd',
+  PLATINUM: 'xptusd', PALLADIUM: 'xpdusd',
 };
 
 function mapTicker(raw: string): MappedTicker {
@@ -67,11 +69,11 @@ function mapTicker(raw: string): MappedTicker {
 //
 // URL format:  https://stooq.pl/q/l/?s={symbol}&f=sd2t2opc1&e=csv
 //
-// CSV response (with header line via e=csv):
-//   Symbol,Date,Time,Open,Close,Change,%Chg
-//   PKN,2026-05-18,17:05:00,58.00,58.40,0.40,0.69
+// Stooq (Polish) uses SEMICOLONS as separator:
+//   Symbol;Date;Time;Open;Close;Change;%Chg
+//   PKN;2026-05-18;17:05:00;58.00;58.40;0.40;0.69
 //
-// The current price is the 4th value (index 3) in the data row.
+// Current price is at index [3] (4th field) after split(';').
 // Invalid/unknown tickers return "N/D" instead of a number.
 
 async function fetchStooqPrice(stooqSymbol: string): Promise<number | null> {
@@ -92,14 +94,17 @@ async function fetchStooqPrice(stooqSymbol: string): Promise<number | null> {
 
   const text = await res.text();
 
-  // Log the first two lines so the terminal shows exactly what Stooq returned
+  // Log raw response (first two lines) so we can see the exact separator & structure
   const preview = text.split('\n').slice(0, 2).join(' | ');
-  console.log(`[stooq] "${stooqSymbol}" → ${preview}`);
+  console.log(`[stooq] "${stooqSymbol}" surowa odpowiedź → ${preview}`);
 
+  // Stooq (PL) uses semicolons, not commas
   const lines   = text.split('\n');
-  const dataRow = lines[1]?.split(',') ?? [];
+  const dataRow = lines[1]?.split(';') ?? [];
 
-  // Index 3 = current price in the sd2t2opc1 CSV format
+  console.log('Surowy wiersz ze Stooq:', dataRow);
+
+  // Index 3 = current price in the sd2t2opc1 semicolon CSV format
   const rawPrice = dataRow[3]?.trim() ?? '';
 
   if (!rawPrice || rawPrice === 'N/D' || rawPrice === '-') {
