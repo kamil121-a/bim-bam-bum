@@ -75,28 +75,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [supabase]);
 
   useEffect(() => {
-    // Initialise from current session (fast, no network call for the token itself).
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const profile = await fetchProfile(
-          supabase,
-          session.user.id,
-          session.user.email!
-        );
-        setUser(profile);
-      }
-      setLoading(false);
-    });
-
-    // Keep user in sync when the session changes (login / logout / token refresh).
+    /**
+     * Use ONLY onAuthStateChange – not getSession() + onAuthStateChange.
+     * onAuthStateChange fires immediately with INITIAL_SESSION on mount,
+     * so a separate getSession() call creates a race condition where:
+     *   - getSession() can return stale/expired data from localStorage
+     *   - onAuthStateChange validates against the server and may return null
+     *   - the two out-of-order setUser() calls cause auth-state flicker → redirect loop
+     *
+     * Handling TOKEN_REFRESH_FAILED is critical: if Supabase cannot refresh the
+     * token (expired refresh token, network error), we sign out immediately to
+     * clear the stale localStorage entry. Without this, the broken token stays in
+     * localStorage and the user must manually clear browser storage.
+     */
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if ((event as string) === 'TOKEN_REFRESH_FAILED') {
+        // Clear the broken session from localStorage so the user never sees
+        // the "needs to clear browser data" loop again.
+        await supabase.auth.signOut();
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       if (session?.user) {
         const profile = await fetchProfile(
           supabase,
           session.user.id,
-          session.user.email!
+          session.user.email!,
         );
         setUser(profile);
       } else {
