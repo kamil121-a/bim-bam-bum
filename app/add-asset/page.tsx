@@ -27,6 +27,7 @@ interface ValuationResult {
   confidence: 'high' | 'medium' | 'low';
   source: string;
   suggestedCategory: AssetCategory;
+  aiCategory: string;
   reasoning: string;
 }
 
@@ -325,9 +326,14 @@ export default function AddAssetPage() {
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                   </div>
-                  <div className="mt-2">
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <CategoryBadge category={category} />
-                    <span className="text-xs text-gray-400 ml-2">sugestia AI</span>
+                    {valuation.aiCategory && valuation.aiCategory !== category && (
+                      <span className="text-xs text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-md">
+                        AI: {valuation.aiCategory}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400">sugestia AI</span>
                   </div>
                 </div>
 

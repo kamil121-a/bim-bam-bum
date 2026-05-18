@@ -21,7 +21,12 @@ export async function GET(request: NextRequest) {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[GET /api/assets]', error);
+    console.error('[GET /api/assets] Supabase error:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     return NextResponse.json({ error: 'Błąd pobierania aktywów.' }, { status: 500 });
   }
 
@@ -39,48 +44,68 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  let body: {
+    name?: string;
+    category?: AssetCategory;
+    value?: number;
+    quantity?: number;
+    reasoning?: string;
+  };
+
   try {
-    const body = await request.json() as {
-      name?: string;
-      category?: AssetCategory;
-      value?: number;
-      quantity?: number;
-      reasoning?: string;
-    };
-
-    const { name, category, value, reasoning } = body;
-    const quantity = typeof body.quantity === 'number' && body.quantity > 0
-      ? body.quantity
-      : 1;
-
-    if (!name?.trim() || !category || value == null || isNaN(value) || value <= 0) {
-      return NextResponse.json(
-        { error: 'Nieprawidłowe dane aktywa.' },
-        { status: 400 }
-      );
-    }
-
-    const { data: asset, error } = await supabase
-      .from('assets')
-      .insert({
-        id: uuidv4(),
-        user_id: user.id,
-        name: name.trim(),
-        category,
-        value: Math.round(value),
-        quantity,
-        reasoning: reasoning ?? null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[POST /api/assets]', error);
-      return NextResponse.json({ error: 'Błąd zapisu aktywa.' }, { status: 500 });
-    }
-
-    return NextResponse.json({ asset }, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: 'Błąd serwera.' }, { status: 500 });
+    body = await request.json();
+  } catch (parseErr) {
+    console.error('[POST /api/assets] Failed to parse request body:', parseErr);
+    return NextResponse.json({ error: 'Nieprawidłowe dane żądania.' }, { status: 400 });
   }
+
+  const { name, category, reasoning } = body;
+
+  // Ensure value is a finite positive number
+  const value = Number(body.value);
+  const quantity = Number(body.quantity) > 0 ? Number(body.quantity) : 1;
+
+  if (!name?.trim()) {
+    return NextResponse.json({ error: 'Brak nazwy aktywa.' }, { status: 400 });
+  }
+  if (!category) {
+    return NextResponse.json({ error: 'Brak kategorii.' }, { status: 400 });
+  }
+  if (!isFinite(value) || value <= 0) {
+    return NextResponse.json({ error: 'Wartość musi być liczbą większą od 0.' }, { status: 400 });
+  }
+
+  const payload = {
+    id: uuidv4(),
+    user_id: user.id,
+    name: name.trim(),
+    category,
+    // Store as plain float – Math.round avoids floating-point noise
+    value: Math.round(value),
+    quantity: parseFloat(quantity.toFixed(8)), // preserve precision for crypto/metals
+    reasoning: reasoning?.trim() ?? null,
+  };
+
+  console.log('[POST /api/assets] Inserting:', { ...payload, user_id: '[redacted]' });
+
+  const { data: asset, error: insertError } = await supabase
+    .from('assets')
+    .insert(payload)
+    .select()
+    .single();
+
+  if (insertError) {
+    console.error('[POST /api/assets] Supabase insert error:', {
+      message: insertError.message,
+      code: insertError.code,
+      details: insertError.details,
+      hint: insertError.hint,
+    });
+    return NextResponse.json(
+      { error: `Błąd zapisu aktywa: ${insertError.message}` },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ asset }, { status: 201 });
 }

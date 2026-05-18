@@ -37,20 +37,25 @@ export async function POST(request: NextRequest) {
       const qty = asset.quantity ?? 1;
       const valuation = await estimateValue(asset.name, qty);
 
-      if (valuation.estimatedValue > 0) {
-        const { error: updateError } = await admin
-          .from('assets')
-          .update({
-            value: valuation.estimatedValue,
-            reasoning: valuation.reasoning,
-          })
-          .eq('id', asset.id);
+        if (valuation.estimatedValue > 0) {
+          const { error: updateError } = await admin
+            .from('assets')
+            .update({
+              value: Math.round(valuation.estimatedValue),
+              reasoning: valuation.reasoning,
+            })
+            .eq('id', asset.id);
 
-        if (updateError) {
-          console.error(`[refresh] update asset ${asset.id}:`, updateError);
-          throw updateError;
+          if (updateError) {
+            console.error(`[refresh] Supabase update error for asset ${asset.id}:`, {
+              message: updateError.message,
+              code: updateError.code,
+              details: updateError.details,
+              hint: updateError.hint,
+            });
+            throw updateError;
+          }
         }
-      }
 
       return { id: asset.id, newValue: valuation.estimatedValue };
     })
