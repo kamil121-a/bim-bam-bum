@@ -546,6 +546,222 @@ async function searchTavily(query: string, signal: AbortSignal): Promise<string 
   }
 }
 
+// ─── Ticker-based valuation (Option A – no AI) ────────────────────────────────
+//
+// Accepts XTB-style tickers:
+//   AAPL.US  → US stock  (Twelve Data, USD → NBP PLN)
+//   PKN.PL   → GPW stock (Twelve Data, already PLN)
+//   BTC      → crypto    (CoinGecko, PLN direct)
+//   GOLD     → metal     (NBP cenyzłota or metals.live)
+//   PLN      → cash      (1:1)
+
+/** Maps XTB / common crypto ticker → CoinGecko asset ID */
+const CRYPTO_TICKER_TO_CG: Record<string, string> = {
+  BTC:   'bitcoin',    ETH:   'ethereum',   SOL:   'solana',
+  XRP:   'ripple',     ADA:   'cardano',    DOGE:  'dogecoin',
+  BNB:   'binancecoin',LTC:   'litecoin',   DOT:   'polkadot',
+  AVAX:  'avalanche-2',LINK:  'chainlink',  TON:   'toncoin',
+  SHIB:  'shiba-inu',  MATIC: 'polygon',    UNI:   'uniswap',
+  ATOM:  'cosmos',     XLM:   'stellar',    NEAR:  'near',
+  PEPE:  'pepe',       ARB:   'arbitrum',   OP:    'optimism',
+  INJ:   'injective',  BONK:  'bonk',       XMR:   'monero',
+  TRX:   'tron',       FIL:   'filecoin',   AAVE:  'aave',
+};
+
+/** Maps common metal tickers → internal slug */
+const METAL_TICKER_TO_SLUG: Record<string, string> = {
+  GOLD: 'gold',  XAU: 'gold',
+  SILVER: 'silver', XAG: 'silver',
+  PLATINUM: 'platinum', XPT: 'platinum',
+  PALLADIUM: 'palladium', XPD: 'palladium',
+  COPPER: 'copper', XCU: 'copper',
+};
+
+type TickerMarket = 'gpw' | 'us' | 'crypto' | 'metal_gold' | 'metal_spot' | 'cash';
+
+interface ParsedTicker {
+  market:   TickerMarket;
+  apiId:    string;   // ID passed to the data source
+  category: string;
+}
+
+/**
+ * Parses XTB-style ticker into routing metadata.
+ * Rules:
+ *   - GOLD / XAU / SILVER / XAG / … → metal
+ *   - BTC / ETH / SOL / …            → crypto (CoinGecko)
+ *   - XYZ.PL or XYZ.WA               → GPW Warsaw (Twelve Data, PLN)
+ *   - XYZ.US                          → US stock (Twelve Data, USD)
+ *   - bare ticker                     → assumed US stock
+ */
+function parseTicker(raw: string): ParsedTicker {
+  const t = raw.trim().toUpperCase();
+
+  if (t === 'PLN') return { market: 'cash',       apiId: 'pln',           category: 'Waluty' };
+
+  const metalSlug = METAL_TICKER_TO_SLUG[t];
+  if (metalSlug) {
+    return metalSlug === 'gold'
+      ? { market: 'metal_gold', apiId: metalSlug,  category: 'Metale' }
+      : { market: 'metal_spot', apiId: metalSlug,  category: 'Metale' };
+  }
+
+  const cgId = CRYPTO_TICKER_TO_CG[t];
+  if (cgId) return { market: 'crypto', apiId: cgId, category: 'Krypto' };
+
+  if (t.endsWith('.PL')) return { market: 'gpw', apiId: `${t.slice(0, -3)}.WA`, category: 'Giełda' };
+  if (t.endsWith('.WA')) return { market: 'gpw', apiId: t,                        category: 'Giełda' };
+
+  if (t.endsWith('.US')) return { market: 'us',  apiId: t.slice(0, -3),           category: 'Giełda' };
+
+  // Bare ticker – treat as US/global (Twelve Data resolves most major symbols)
+  return { market: 'us', apiId: t, category: 'Giełda' };
+}
+
+/**
+ * Option A – Direct ticker → market price, zero AI involved.
+ * Throws a descriptive Error if the ticker is not found or the API fails;
+ * the API route converts it to a 422 JSON response.
+ */
+export async function estimateByTicker(
+  ticker:   string,
+  quantity: number,
+): Promise<ValuationResult> {
+  const qty        = Math.max(0.0001, quantity);
+  const controller = new AbortController();
+  const timer      = setTimeout(() => controller.abort(), HARD_TIMEOUT_MS);
+
+  try {
+    const parsed = parseTicker(ticker);
+    const label  = ticker.trim().toUpperCase();
+
+    console.log(`[valuate] ticker "${label}" → market=${parsed.market} apiId=${parsed.apiId}`);
+
+    switch (parsed.market) {
+
+      case 'cash': {
+        const total = Math.round(qty);
+        return {
+          estimatedValue:    total,
+          unitPrice:         1,
+          currency:          'PLN',
+          confidence:        'high',
+          source:            'Gotówka PLN (1:1)',
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Waluty',
+          reasoning:         `Gotówka: ${qty.toLocaleString('pl-PL')} PLN`,
+        };
+      }
+
+      case 'metal_gold': {
+        const plnPerGram = await fetchGoldPlnPerGram(controller.signal);
+        if (!plnPerGram) throw new Error('Nie udało się pobrać ceny złota z NBP. Spróbuj za chwilę.');
+        const total = Math.round(plnPerGram * qty);
+        return {
+          estimatedValue:    total,
+          unitPrice:         Math.round(plnPerGram),
+          currency:          'PLN',
+          confidence:        'high',
+          source:            'NBP cenyzłota (PLN/gram)',
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Metale',
+          reasoning:         `Złoto (NBP): ${plnPerGram.toFixed(2)} PLN/gram × ${qty} g`,
+        };
+      }
+
+      case 'metal_spot': {
+        const [spotUsd, usdPln] = await Promise.all([
+          fetchMetalUsd(parsed.apiId, controller.signal),
+          getUsdPln(controller.signal),
+        ]);
+        if (!spotUsd) throw new Error(`Nie znaleziono notowania metalu: ${label}. Dostępne: SILVER, XAG, PLATINUM, PALLADIUM.`);
+        const unitPrice = Math.round(spotUsd * usdPln);
+        const total     = Math.round(unitPrice * qty);
+        return {
+          estimatedValue:    total,
+          unitPrice,
+          currency:          'PLN',
+          confidence:        'high',
+          source:            'metals.live + NBP USD/PLN',
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Metale',
+          reasoning:         `${label}: ${spotUsd.toFixed(2)} USD/oz × ${usdPln.toFixed(4)} = ${unitPrice.toLocaleString('pl-PL')} PLN/oz`,
+        };
+      }
+
+      case 'crypto': {
+        const pln = await fetchCryptoPln(parsed.apiId, controller.signal);
+        if (!pln) throw new Error(`Nie znaleziono kryptowaluty: ${label}. Dostępne: BTC, ETH, SOL, XRP, ADA, DOGE…`);
+        const total = Math.round(pln * qty);
+        return {
+          estimatedValue:    total,
+          unitPrice:         Math.round(pln),
+          currency:          'PLN',
+          confidence:        'high',
+          source:            'CoinGecko (PLN)',
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Krypto',
+          reasoning:         `${label}: ${pln.toLocaleString('pl-PL')} PLN/szt.`,
+        };
+      }
+
+      case 'gpw': {
+        // Twelve Data returns GPW prices already in PLN
+        const pricePln = await fetchStockUsd(parsed.apiId, controller.signal);
+        if (!pricePln) throw new Error(
+          `Nie znaleziono tickera GPW: ${label}. Użyj formatu z końcówką .PL (np. PKN.PL, PKO.PL, ALE.PL).`,
+        );
+        const unitPrice = Math.round(pricePln);
+        const total     = Math.round(unitPrice * qty);
+        return {
+          estimatedValue:    total,
+          unitPrice,
+          currency:          'PLN',
+          confidence:        'high',
+          source:            `Twelve Data (${parsed.apiId}, GPW)`,
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Giełda',
+          reasoning:         `${label}: ${pricePln.toFixed(2)} PLN/szt. (GPW Warszawa)`,
+        };
+      }
+
+      case 'us': {
+        const [priceUsd, usdPln] = await Promise.all([
+          fetchStockUsd(parsed.apiId, controller.signal),
+          getUsdPln(controller.signal),
+        ]);
+        if (!priceUsd) throw new Error(
+          `Nie znaleziono tickera: ${label}. Użyj formatu z końcówką .US (np. AAPL.US, TSLA.US, MCD.US).`,
+        );
+        const unitPrice = Math.round(priceUsd * usdPln);
+        const total     = Math.round(unitPrice * qty);
+        return {
+          estimatedValue:    total,
+          unitPrice,
+          currency:          'PLN',
+          confidence:        'high',
+          source:            `Twelve Data (${parsed.apiId}) + NBP USD/PLN`,
+          suggestedCategory: 'Finanse',
+          aiCategory:        'Giełda',
+          reasoning:         `${label}: ${priceUsd.toFixed(2)} USD × ${usdPln.toFixed(4)} = ${unitPrice.toLocaleString('pl-PL')} PLN/szt.`,
+        };
+      }
+
+      default: {
+        // TypeScript exhaustiveness guard
+        throw new Error(`Nieobsługiwany rynek dla: ${label}`);
+      }
+    }
+
+  } catch (err) {
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || controller.signal.aborted);
+    if (isAbort) throw new Error('Przekroczono czas zapytania (8 s). Spróbuj ponownie.');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const HARD_TIMEOUT_MS = 8_000;

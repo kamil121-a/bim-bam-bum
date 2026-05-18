@@ -52,15 +52,18 @@ const CONFIDENCE_COLOR: Record<string, string> = {
   low:    'text-violet-600 bg-violet-50 border-violet-200',
 };
 
-const MARKET_EXAMPLES = [
-  { label: 'S&P 500 ETF', name: 'S&P 500 ETF',        qty: '10'  },
-  { label: 'Bitcoin',     name: 'Bitcoin',              qty: '0.5' },
-  { label: 'Złoto (g)',   name: 'Złoto',                qty: '10'  },
-  { label: 'Srebro (oz)', name: 'Srebro',               qty: '5'   },
-  { label: 'Apple',       name: 'Apple akcje',          qty: '3'   },
-  { label: 'CD Projekt',  name: 'CD Projekt',           qty: '10'  },
-  { label: 'Ethereum',    name: 'Ethereum',             qty: '1'   },
-  { label: 'PKO BP',      name: 'PKO BP',               qty: '20'  },
+const MARKET_EXAMPLES: Array<{ label: string; ticker: string; qty: string }> = [
+  { label: 'S&P 500',    ticker: 'SPY.US',  qty: '10'  },
+  { label: 'Bitcoin',    ticker: 'BTC',     qty: '0.5' },
+  { label: 'Ethereum',   ticker: 'ETH',     qty: '1'   },
+  { label: 'Złoto (g)',  ticker: 'GOLD',    qty: '10'  },
+  { label: 'Srebro (oz)',ticker: 'SILVER',  qty: '5'   },
+  { label: 'Apple',      ticker: 'AAPL.US', qty: '3'   },
+  { label: 'NVIDIA',     ticker: 'NVDA.US', qty: '1'   },
+  { label: 'Tesla',      ticker: 'TSLA.US', qty: '2'   },
+  { label: 'Orlen',      ticker: 'PKN.PL',  qty: '10'  },
+  { label: 'PKO BP',     ticker: 'PKO.PL',  qty: '20'  },
+  { label: 'Allegro',    ticker: 'ALE.PL',  qty: '5'   },
 ];
 
 const DESC_EXAMPLES = [
@@ -86,8 +89,8 @@ export default function AddAssetPage() {
   const [manualValue, setManualValue] = useState('');
   const [error,       setError]       = useState('');
 
-  // Market-mode state
-  const [name,     setName]     = useState('');
+  // Market-mode state (ticker = XTB-style symbol, e.g. AAPL.US, PKN.PL, BTC)
+  const [ticker,   setTicker]   = useState('');
   const [quantity, setQuantity] = useState('1');
 
   // Description-mode state
@@ -103,6 +106,8 @@ export default function AddAssetPage() {
     setMode(m);
     setStep('input');
     setError('');
+    setTicker('');
+    setDescription('');
   };
 
   // ── Valuate helpers ──────────────────────────────────────────────────────────
@@ -122,14 +127,15 @@ export default function AddAssetPage() {
     setStep('input');
   };
 
-  // ── Valuate: Market (Option A) ───────────────────────────────────────────────
+  // ── Valuate: Market / Ticker (Option A – no AI) ──────────────────────────────
 
   const handleValuateMarket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (step === 'valuating') return;
 
-    if (!name.trim() || name.trim().length < 2) {
-      setError('Wpisz co najmniej 2 znaki nazwy aktywa.');
+    const t = ticker.trim().toUpperCase();
+    if (!t) {
+      setError('Wpisz ticker, np. AAPL.US, PKN.PL lub BTC.');
       return;
     }
     const qty = parseFloat(quantity);
@@ -145,13 +151,13 @@ export default function AddAssetPage() {
       const res = await fetch('/api/valuate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name: name.trim(), quantity: qty }),
+        body:    JSON.stringify({ ticker: t, quantity: qty }),
       });
 
       if (res.status === 401) { router.replace('/login'); return; }
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error((d as { error?: string }).error ?? `Błąd HTTP ${res.status}`);
+        throw new Error((d as { error?: string }).error ?? `Ticker nie znaleziony (HTTP ${res.status})`);
       }
       applyValuationResult(await res.json());
     } catch (err) {
@@ -211,9 +217,9 @@ export default function AddAssetPage() {
       }
     }
 
-    // Asset name: market → name input; description → first 200 chars of description
+    // Asset name: market → ticker; description → first 200 chars of description
     const assetName = mode === 'market'
-      ? name.trim()
+      ? ticker.trim().toUpperCase()
       : description.trim().slice(0, 200);
 
     // Quantity: description mode always 1
@@ -259,7 +265,7 @@ export default function AddAssetPage() {
 
   const handleReset = () => {
     setStep('input');
-    setName('');
+    setTicker('');
     setQuantity('1');
     setDescription('');
     setValuation(null);
@@ -271,7 +277,7 @@ export default function AddAssetPage() {
 
   const displayQty    = mode === 'market' ? (parseFloat(quantity) || 1) : 1;
   const displayName   = mode === 'market'
-                          ? name
+                          ? ticker.trim().toUpperCase()
                           : (description.slice(0, 70) + (description.length > 70 ? '…' : ''));
   const isManual      = valuation?.requiresManualPrice === true;
   const finalValue    = isManual
@@ -334,28 +340,30 @@ export default function AddAssetPage() {
         {(step === 'input' || step === 'valuating') && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
 
-            {/* ── OPTION A: Market ── */}
+            {/* ── OPTION A: Ticker / Market (no AI) ── */}
             {mode === 'market' && (
               <form onSubmit={handleValuateMarket} className="space-y-5">
-                <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
-                  Wpisz nazwę akcji, ETF, kryptowaluty, metalu lub gotówki.
-                  AI rozpozna ticker i pobierze aktualny kurs giełdowy.
+                <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 space-y-1">
+                  <p className="font-medium text-indigo-700">Format tickerów:</p>
+                  <p>Akcje US: <code className="bg-indigo-100 px-1 rounded text-xs">AAPL.US</code> &nbsp; GPW: <code className="bg-indigo-100 px-1 rounded text-xs">PKN.PL</code> &nbsp; Krypto: <code className="bg-indigo-100 px-1 rounded text-xs">BTC</code> &nbsp; Metale: <code className="bg-indigo-100 px-1 rounded text-xs">GOLD</code> <code className="bg-indigo-100 px-1 rounded text-xs">SILVER</code></p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Nazwa aktywa
+                    Ticker / Symbol
                   </label>
                   <div className="relative">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
                       type="text"
-                      value={name}
-                      onChange={e => setName(e.target.value)}
-                      placeholder='np. "Bitcoin", "S&P 500 ETF", "Złoto", "Apple"'
-                      className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
+                      value={ticker}
+                      onChange={e => setTicker(e.target.value.toUpperCase())}
+                      placeholder='np. AAPL.US, PKN.PL, BTC, GOLD'
+                      className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400 font-mono tracking-wide"
                       disabled={step === 'valuating'}
                       autoFocus
+                      autoCapitalize="characters"
+                      spellCheck={false}
                     />
                   </div>
                 </div>
@@ -378,37 +386,37 @@ export default function AddAssetPage() {
                     />
                   </div>
                   <p className="text-xs text-gray-400 mt-1.5">
-                    Akcje / crypto: liczba sztuk. Metale: <strong>uncje trojańskie (oz)</strong> lub gramy (złoto). Gotówka: kwota w PLN.
+                    Akcje / crypto: liczba sztuk. Złoto: gramy. Pozostałe metale: uncje trojańskie (oz). Gotówka: kwota PLN.
                   </p>
                 </div>
 
                 {error && (
-                  <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600">
+                  <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
                     {error}
                   </div>
                 )}
 
                 <button
                   type="submit"
-                  disabled={step === 'valuating' || !name.trim()}
+                  disabled={step === 'valuating' || !ticker.trim()}
                   className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-indigo-200"
                 >
                   {step === 'valuating' ? (
                     <>
                       <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Pobieram kurs giełdowy…</span>
+                      <span>Pobieram kurs…</span>
                     </>
                   ) : (
                     <>
                       <TrendingUp className="w-4 h-4" />
-                      <span>Pobierz kurs giełdowy</span>
+                      <span>Pobierz kurs rynkowy</span>
                     </>
                   )}
                 </button>
 
                 {step === 'valuating' && (
                   <p className="text-center text-xs text-gray-400 animate-pulse">
-                    AI rozpoznaje ticker, następnie pobierany jest aktualny kurs rynkowy…
+                    Pobieranie aktualnego kursu z giełdy / CoinGecko / NBP…
                   </p>
                 )}
 
@@ -421,11 +429,12 @@ export default function AddAssetPage() {
                       <button
                         key={ex.label}
                         type="button"
-                        onClick={() => { setName(ex.name); setQuantity(ex.qty); }}
+                        onClick={() => { setTicker(ex.ticker); setQuantity(ex.qty); }}
                         disabled={step === 'valuating'}
                         className="px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors disabled:opacity-50"
                       >
-                        {ex.label}
+                        <span className="font-mono">{ex.ticker}</span>
+                        <span className="text-gray-400 ml-1">({ex.label})</span>
                       </button>
                     ))}
                   </div>
