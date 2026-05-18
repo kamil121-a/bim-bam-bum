@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Trash2, Pencil, Check, X, Info, CheckCircle2 } from 'lucide-react';
-import type { Asset } from '@/types';
+import type { Asset, AssetCategory } from '@/types';
+import { ASSET_CATEGORIES } from '@/types';
 import CategoryBadge from './CategoryBadge';
 
 // ── Exported helpers (used in other components) ───────────────────────────────
@@ -25,7 +26,7 @@ function formatQuantity(qty: number): string {
 interface Props {
   asset:     Asset;
   onDelete:  (id: string) => void;
-  onEdit:    (id: string, changes: { name: string; quantity: number }) => Promise<void>;
+  onEdit:    (id: string, changes: { name: string; quantity: number; category: AssetCategory }) => Promise<void>;
   deleting:  boolean;
   refreshed?: boolean;
 }
@@ -36,6 +37,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
   const [editing,   setEditing]   = useState(false);
   const [editName,  setEditName]  = useState(asset.name);
   const [editQty,   setEditQty]   = useState(String(asset.quantity ?? 1));
+  const [editCat,   setEditCat]   = useState<AssetCategory>(asset.category);
   const [saving,    setSaving]    = useState(false);
   const [editError, setEditError] = useState('');
   // Controls the green checkmark badge — stays visible for 3.5 s after refresh
@@ -68,7 +70,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
     setSaving(true);
     setEditError('');
     try {
-      await onEdit(asset.id, { name: editName.trim(), quantity: qty });
+      await onEdit(asset.id, { name: editName.trim(), quantity: qty, category: editCat });
       setEditing(false);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Błąd zapisu. Spróbuj ponownie.');
@@ -81,6 +83,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
     setEditing(false);
     setEditName(asset.name);
     setEditQty(String(asset.quantity ?? 1));
+    setEditCat(asset.category);
     setEditError('');
   };
 
@@ -102,6 +105,21 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
               autoFocus
               disabled={saving}
             />
+          </div>
+
+          {/* Category field */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Kategoria</label>
+            <select
+              value={editCat}
+              onChange={e => setEditCat(e.target.value as AssetCategory)}
+              disabled={saving}
+              className="w-full px-3 py-2 text-sm rounded-lg bg-slate-700 border border-slate-600 text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+            >
+              {ASSET_CATEGORIES.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
           </div>
 
           {/* Quantity field */}

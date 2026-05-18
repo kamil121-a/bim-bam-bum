@@ -51,10 +51,13 @@ export async function POST(request: NextRequest) {
   const assets = allAssets as Asset[];
 
   // ── Wybierz zestaw aktywów do odświeżenia ────────────────────────────────────
+  const MARKET_CATS = new Set(['Finanse', 'Akcje', 'Kruszce']);
+  const NON_MARKET_REFRESHABLE = new Set(['Nieruchomości', 'Pojazdy', 'Elektronika', 'Przedmioty kolekcjonerskie', 'Inne']);
+
   const targetAssets =
     refreshType === 'other'
-      ? assets.filter(a => a.category !== 'Finanse')
-      : assets.filter(a => a.category === 'Finanse');
+      ? assets.filter(a => NON_MARKET_REFRESHABLE.has(a.category))
+      : assets.filter(a => MARKET_CATS.has(a.category));
 
   // Alias for backwards compat in finance path
   const financeAssets = targetAssets;

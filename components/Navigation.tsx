@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { LayoutDashboard, PlusCircle, Trophy, LogOut, Wallet } from 'lucide-react';
+import { LayoutDashboard, PlusCircle, Trophy, LogOut, Wallet, BarChart2 } from 'lucide-react';
 
 const NAV_LINKS = [
   { href: '/dashboard', label: 'Panel',        icon: LayoutDashboard },
   { href: '/add-asset', label: 'Dodaj Aktywo', icon: PlusCircle },
   { href: '/ranking',   label: 'Ranking',      icon: Trophy },
+  { href: '/stats',     label: 'Statystyki',   icon: BarChart2 },
 ];
 
 export default function Navigation() {

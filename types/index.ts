@@ -1,11 +1,30 @@
-export type AssetCategory = 'Elektronika' | 'Finanse' | 'Nieruchomości' | 'Inne';
+export type AssetCategory =
+  | 'Akcje'
+  | 'Kruszce'
+  | 'Gotówka'
+  | 'Finanse'                   // legacy – backward compat
+  | 'Nieruchomości'
+  | 'Pojazdy'
+  | 'Elektronika'
+  | 'Przedmioty kolekcjonerskie'
+  | 'Inne';
 
 export const ASSET_CATEGORIES: AssetCategory[] = [
-  'Elektronika',
+  'Akcje',
+  'Kruszce',
+  'Gotówka',
   'Finanse',
   'Nieruchomości',
+  'Pojazdy',
+  'Elektronika',
+  'Przedmioty kolekcjonerskie',
   'Inne',
 ];
+
+/** Categories that belong to the "Finanse" visual group */
+export const FINANCE_CATEGORIES = new Set<AssetCategory>([
+  'Akcje', 'Kruszce', 'Gotówka', 'Finanse',
+]);
 
 /** Matches Supabase snake_case column names returned from the DB. */
 export interface Asset {

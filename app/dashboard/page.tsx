@@ -8,13 +8,15 @@ import Navigation from '@/components/Navigation';
 import AssetCard, { formatPLN } from '@/components/AssetCard';
 import CategoryBadge from '@/components/CategoryBadge';
 import type { Asset, AssetCategory } from '@/types';
+import { FINANCE_CATEGORIES } from '@/types';
 import {
-  PlusCircle, TrendingUp, Package, Layers,
+  PlusCircle, TrendingUp,
   RefreshCw, ArrowUpDown, ChevronDown, ChevronRight,
   Sparkles,
 } from 'lucide-react';
 
-const CATEGORY_ORDER: AssetCategory[] = ['Finanse', 'Nieruchomości', 'Elektronika', 'Inne'];
+const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
+const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Przedmioty kolekcjonerskie', 'Inne'];
 
 function AssetSkeleton() {
   return (
@@ -45,8 +47,8 @@ export default function DashboardPage() {
   // Sort: 'value' = highest first, 'date' = newest first
   const [sortBy, setSortBy] = useState<'value' | 'date'>('value');
 
-  // Collapsed categories
-  const [collapsed, setCollapsed] = useState<Set<AssetCategory>>(new Set());
+  // Collapsed sections (string keys: 'finanse' parent, or category name for others)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -79,7 +81,7 @@ export default function DashboardPage() {
   };
 
   const handleEdit = useCallback(
-    async (id: string, changes: { name: string; quantity: number }) => {
+    async (id: string, changes: { name: string; quantity: number; category: AssetCategory }) => {
       const res = await fetch(`/api/assets/${id}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -158,10 +160,10 @@ export default function DashboardPage() {
   };
 
   // ── Toggle collapse ───────────────────────────────────────────────────────────
-  const toggleCollapse = (cat: AssetCategory) => {
+  const toggleCollapse = (key: string) => {
     setCollapsed(prev => {
       const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
   };
@@ -169,19 +171,30 @@ export default function DashboardPage() {
   // ── Derived ───────────────────────────────────────────────────────────────────
   const totalValue = assets.reduce((sum, a) => sum + a.value, 0);
 
-  const byCategory = CATEGORY_ORDER.map(cat => {
-    const catAssets = assets
-      .filter(a => a.category === cat)
-      .sort((a, b) =>
-        sortBy === 'value'
-          ? b.value - a.value
-          : new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-      );
-    return { category: cat, assets: catAssets, total: catAssets.reduce((s, a) => s + a.value, 0) };
+  const sortedGroup = (list: Asset[]) =>
+    [...list].sort((a, b) =>
+      sortBy === 'value'
+        ? b.value - a.value
+        : new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+
+  // Finance sub-groups
+  const financeSubGroups = FINANCE_CATS.map(cat => {
+    const list = sortedGroup(assets.filter(a => a.category === cat));
+    return { category: cat, assets: list, total: list.reduce((s, a) => s + a.value, 0) };
+  }).filter(g => g.assets.length > 0);
+  const financeTotal = financeSubGroups.reduce((s, g) => s + g.total, 0);
+
+  // Non-finance groups
+  const otherGroups = OTHER_CATS.map(cat => {
+    const list = sortedGroup(assets.filter(a => a.category === cat));
+    return { category: cat, assets: list, total: list.reduce((s, a) => s + a.value, 0) };
   }).filter(g => g.assets.length > 0);
 
-  const hasFinance = assets.some(a => a.category === 'Finanse');
-  const hasOther   = assets.some(a => a.category !== 'Finanse');
+  // For refresh button visibility
+  const MARKET_CATS = new Set<AssetCategory>(['Finanse', 'Akcje', 'Kruszce']);
+  const hasMarket = assets.some(a => MARKET_CATS.has(a.category));
+  const hasOther  = assets.some(a => !FINANCE_CATEGORIES.has(a.category));
 
   if (loading || !user) {
     return (
@@ -209,13 +222,13 @@ export default function DashboardPage() {
           </div>
 
           {/* Refresh buttons */}
-          {!fetchLoading && (hasFinance || hasOther) && (
+          {!fetchLoading && (hasMarket || hasOther) && (
             <div className="flex gap-2 flex-wrap">
-              {hasFinance && (
+              {hasMarket && (
                 <button
                   onClick={handleRefresh}
                   disabled={refreshing || refreshingOther}
-                  title="Odśwież kursy giełdowe (Finanse)"
+                  title="Odśwież kursy giełdowe (Akcje, Kruszce)"
                   className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-700 hover:border-indigo-500/40 hover:text-indigo-300 transition-colors disabled:opacity-50"
                 >
                   <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -226,7 +239,7 @@ export default function DashboardPage() {
                 <button
                   onClick={handleRefreshOther}
                   disabled={refreshing || refreshingOther}
-                  title="Odśwież wyceny AI (Nieruchomości, Elektronika, Inne)"
+                  title="Odśwież wyceny AI (Nieruchomości, Pojazdy, Elektronika, Przedmioty kolekcjonerskie, Inne)"
                   className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-700 hover:border-violet-500/40 hover:text-violet-300 transition-colors disabled:opacity-50"
                 >
                   <Sparkles className={`w-4 h-4 ${refreshingOther ? 'animate-spin' : ''}`} />
@@ -244,44 +257,20 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── Summary cards ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-          <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-xl shadow-indigo-900/30">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
-                <TrendingUp className="w-5 h-5" />
-              </div>
+        {/* ── Summary card (tylko majątek) ── */}
+        <div className="mb-8">
+          <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-xl shadow-indigo-900/30 flex items-center gap-6">
+            <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
+              <TrendingUp className="w-6 h-6" />
+            </div>
+            <div>
               <span className="text-sm font-medium text-indigo-200">Łączny majątek</span>
+              <p className="text-3xl font-bold mt-0.5">
+                {fetchLoading
+                  ? <span className="inline-block w-40 h-9 bg-white/20 rounded-lg animate-pulse" />
+                  : formatPLN(totalValue)}
+              </p>
             </div>
-            <p className="text-3xl font-bold">
-              {fetchLoading
-                ? <span className="inline-block w-32 h-8 bg-white/20 rounded-lg animate-pulse" />
-                : formatPLN(totalValue)}
-            </p>
-          </div>
-
-          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700/60 shadow-sm">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center">
-                <Package className="w-5 h-5 text-emerald-400" />
-              </div>
-              <span className="text-sm font-medium text-slate-400">Aktywów</span>
-            </div>
-            <p className="text-3xl font-bold text-slate-100">
-              {fetchLoading ? <span className="inline-block w-10 h-8 bg-slate-700 rounded-lg animate-pulse" /> : assets.length}
-            </p>
-          </div>
-
-          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700/60 shadow-sm">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center">
-                <Layers className="w-5 h-5 text-amber-400" />
-              </div>
-              <span className="text-sm font-medium text-slate-400">Kategorie</span>
-            </div>
-            <p className="text-3xl font-bold text-slate-100">
-              {fetchLoading ? <span className="inline-block w-10 h-8 bg-slate-700 rounded-lg animate-pulse" /> : byCategory.length}
-            </p>
           </div>
         </div>
 
@@ -316,13 +305,85 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            {byCategory.map(({ category, assets: catAssets, total }) => {
-              const isCollapsed = collapsed.has(category);
+            {/* ── Finanse (parent group) ── */}
+            {financeSubGroups.length > 0 && (() => {
+              const parentKey = '__finanse__';
+              const isParentCollapsed = collapsed.has(parentKey);
+              return (
+                <section>
+                  {/* Parent Finanse header */}
+                  <button
+                    onClick={() => toggleCollapse(parentKey)}
+                    className="w-full flex items-center justify-between mb-3 group"
+                  >
+                    <div className="flex items-center gap-2">
+                      {isParentCollapsed
+                        ? <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                        : <ChevronDown  className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                      }
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <span>📊</span> Finanse
+                      </span>
+                      <span className="text-sm text-slate-500">
+                        ({financeSubGroups.reduce((s, g) => s + g.assets.length, 0)})
+                      </span>
+                    </div>
+                    <span className="text-sm font-semibold text-slate-300">{formatPLN(financeTotal)}</span>
+                  </button>
+
+                  {/* Sub-groups */}
+                  {!isParentCollapsed && (
+                    <div className="pl-4 border-l-2 border-slate-700/60 space-y-4">
+                      {financeSubGroups.map(({ category, assets: catAssets, total }) => {
+                        const subKey = `sub_${category}`;
+                        const isCollapsed = collapsed.has(subKey);
+                        return (
+                          <div key={category}>
+                            <button
+                              onClick={() => toggleCollapse(subKey)}
+                              className="w-full flex items-center justify-between mb-2 group"
+                            >
+                              <div className="flex items-center gap-2">
+                                {isCollapsed
+                                  ? <ChevronRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                                  : <ChevronDown  className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                                }
+                                <CategoryBadge category={category} />
+                                <span className="text-xs text-slate-500">({catAssets.length})</span>
+                              </div>
+                              <span className="text-xs font-semibold text-slate-400">{formatPLN(total)}</span>
+                            </button>
+                            {!isCollapsed && (
+                              <div className="space-y-2">
+                                {catAssets.map(asset => (
+                                  <AssetCard
+                                    key={asset.id}
+                                    asset={asset}
+                                    onDelete={handleDelete}
+                                    onEdit={handleEdit}
+                                    deleting={deletingId === asset.id}
+                                    refreshed={refreshedIds.has(asset.id)}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
+
+            {/* ── Other categories ── */}
+            {otherGroups.map(({ category, assets: catAssets, total }) => {
+              const key = category;
+              const isCollapsed = collapsed.has(key);
               return (
                 <section key={category}>
-                  {/* Category header — clickable to collapse */}
                   <button
-                    onClick={() => toggleCollapse(category)}
+                    onClick={() => toggleCollapse(key)}
                     className="w-full flex items-center justify-between mb-3 group"
                   >
                     <div className="flex items-center gap-2">
@@ -335,8 +396,6 @@ export default function DashboardPage() {
                     </div>
                     <span className="text-sm font-semibold text-slate-300">{formatPLN(total)}</span>
                   </button>
-
-                  {/* Asset list — hidden when collapsed */}
                   {!isCollapsed && (
                     <div className="space-y-2">
                       {catAssets.map(asset => (
@@ -357,7 +416,7 @@ export default function DashboardPage() {
 
             <div className="flex items-center justify-between pt-2 border-t border-slate-800">
               <div className="flex gap-2">
-                {hasFinance && (
+                {hasMarket && (
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing || refreshingOther}

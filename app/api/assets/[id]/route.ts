@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { ASSET_CATEGORIES } from '@/types';
+import type { AssetCategory } from '@/types';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -62,20 +64,23 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
-  let body: { name?: string; quantity?: number };
+  let body: { name?: string; quantity?: number; category?: AssetCategory };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Nieprawidłowe dane.' }, { status: 400 });
   }
 
-  const { name, quantity } = body;
+  const { name, quantity, category } = body;
 
   if (name !== undefined && !name.trim()) {
     return NextResponse.json({ error: 'Nazwa nie może być pusta.' }, { status: 400 });
   }
   if (quantity !== undefined && (!isFinite(quantity) || quantity <= 0)) {
     return NextResponse.json({ error: 'Ilość musi być liczbą > 0.' }, { status: 400 });
+  }
+  if (category !== undefined && !ASSET_CATEGORIES.includes(category)) {
+    return NextResponse.json({ error: 'Nieprawidłowa kategoria.' }, { status: 400 });
   }
 
   const admin = createSupabaseAdminClient();
@@ -108,6 +113,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       original_name: originalName,
       quantity:      parseFloat(newQty.toFixed(8)),
       value:         newValue,
+      ...(category !== undefined && { category }),
     })
     .eq('id', id)
     .eq('user_id', user.id)
