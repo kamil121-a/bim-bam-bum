@@ -8,7 +8,7 @@ import { formatPLN } from '@/components/AssetCard';
 import CategoryBadge from '@/components/CategoryBadge';
 import type { AssetCategory } from '@/types';
 import { ASSET_CATEGORIES } from '@/types';
-import { BarChart2, Users, RefreshCw, Coins, Crown } from 'lucide-react';
+import { BarChart2, Users, RefreshCw, Coins, Trophy } from 'lucide-react';
 
 interface UserData {
   id:           string;
@@ -31,31 +31,41 @@ interface SharedAsset {
   holders:  Holder[];
 }
 
-interface CurrencyStatRow {
+interface CashLeaderboardRow {
+  rank:     number;
   userId:   string;
   username: string;
   quantity: number;
-  valuePln: number;
 }
 
-interface CurrencyStat {
-  currency:      string;
-  maxQuantity:   CurrencyStatRow;
-  maxValuePln:   CurrencyStatRow;
-  holders:       CurrencyStatRow[];
+interface CashCurrencyBlock {
+  currency:    string;
+  leaderboard: CashLeaderboardRow[];
 }
 
-interface CategoryLeaderRow {
+interface CategoryRankingRow {
+  rank:     number;
+  userId:   string;
+  username: string;
+  totalPln: number;
+}
+
+interface CategoryRankingBlock {
   category: string;
-  leader:   { userId: string; username: string; totalPln: number } | null;
+  rankings: CategoryRankingRow[];
 }
 
 interface StatsData {
   users:             UserData[];
   sharedAssets:      SharedAsset[];
-  currencyStats?:    CurrencyStat[];
-  categoryLeaders?:  CategoryLeaderRow[];
+  cashByCurrency?:   CashCurrencyBlock[];
+  categoryRankings?: CategoryRankingBlock[];
   currentUserId:     string;
+}
+
+function formatCashQuantity(qty: number, currency: string): string {
+  const n = parseFloat(qty.toFixed(6));
+  return `${n.toLocaleString('pl-PL', { maximumFractionDigits: 4 })} ${currency}`;
 }
 
 export default function StatsPage() {
@@ -97,13 +107,15 @@ export default function StatsPage() {
 
   if (!data) return null;
 
-  const { users, sharedAssets, currencyStats = [], categoryLeaders = [], currentUserId } = data;
+  const { users, sharedAssets, cashByCurrency = [], categoryRankings = [], currentUserId } = data;
   const sortedUsers = [...users].sort((a, b) => b.total_wealth - a.total_wealth);
+  const nickList    = [...users].sort((a, b) => a.username.localeCompare(b.username, 'pl'));
 
-  // Categories present across all users
   const presentCats = ASSET_CATEGORIES.filter(cat =>
-    users.some(u => (u.categories[cat] ?? 0) > 0)
+    users.some(u => (u.categories[cat] ?? 0) > 0),
   );
+
+  const hasCash = cashByCurrency.some(c => c.leaderboard.length > 0);
 
   return (
     <>
@@ -130,139 +142,34 @@ export default function StatsPage() {
           </button>
         </div>
 
-        {/* ── Portfolio breakdown by category ── */}
-        {presentCats.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-slate-400" />
-              <h3 className="text-lg font-semibold text-slate-200">Portfele wg kategorii</h3>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-700">
-                    <th className="text-left py-3 px-3 text-slate-400 font-medium w-36">Kategoria</th>
-                    {sortedUsers.map(u => (
-                      <th key={u.id} className={`text-right py-3 px-3 font-medium ${u.id === currentUserId ? 'text-indigo-400' : 'text-slate-400'}`}>
-                        {u.username}
-                        {u.id === currentUserId && <span className="ml-1 text-xs text-indigo-500">(Ty)</span>}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {presentCats.map(cat => (
-                    <tr key={cat} className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
-                      <td className="py-3 px-3">
-                        <CategoryBadge category={cat as AssetCategory} />
-                      </td>
-                      {sortedUsers.map(u => {
-                        const val = u.categories[cat] ?? 0;
-                        return (
-                          <td key={u.id} className={`text-right py-3 px-3 font-medium ${val > 0 ? (u.id === currentUserId ? 'text-indigo-300' : 'text-slate-200') : 'text-slate-600'}`}>
-                            {val > 0 ? formatPLN(val) : '–'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                  {/* Total row */}
-                  <tr className="border-t-2 border-slate-600">
-                    <td className="py-3 px-3 font-semibold text-slate-300">Łącznie</td>
-                    {sortedUsers.map(u => (
-                      <td key={u.id} className={`text-right py-3 px-3 font-bold text-base ${u.id === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
-                        {formatPLN(u.total_wealth)}
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {/* ── Currency leaders ── */}
-        {currencyStats.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Coins className="w-5 h-5 text-emerald-400" />
-              <h3 className="text-lg font-semibold text-slate-200">Gotówka – kto ma najwięcej</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-4">
-              Porównanie według <strong className="text-slate-400">ilości</strong> danej waluty oraz{' '}
-              <strong className="text-slate-400">wartości w PLN</strong> (wg zapisanych aktywów „Gotówka”).
+        {/* Uczestnicy – nicki */}
+        {nickList.length > 0 && (
+          <div className="rounded-2xl border border-slate-700/60 bg-slate-800/80 px-4 py-3">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+              Nicki w zestawieniach
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {currencyStats.map(cs => (
-                <div
-                  key={cs.currency}
-                  className="bg-slate-800 rounded-2xl border border-slate-700/60 p-5 space-y-4"
+            <div className="flex flex-wrap gap-2">
+              {nickList.map(u => (
+                <span
+                  key={u.id}
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold border ${
+                    u.id === currentUserId
+                      ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                      : 'bg-slate-700/80 text-slate-200 border-slate-600'
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg font-bold text-slate-100">{cs.currency}</span>
-                    <span className="text-xs text-slate-500">{cs.holders.length} użytkowników</span>
-                  </div>
-                  <div className="space-y-3 text-sm">
-                    <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3 py-2.5">
-                      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Największa ilość</p>
-                      <p className={`font-semibold ${cs.maxQuantity.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
-                        {cs.maxQuantity.username}
-                        {cs.maxQuantity.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
-                      </p>
-                      <p className="text-emerald-400 font-mono mt-0.5">
-                        {parseFloat(cs.maxQuantity.quantity.toFixed(4)).toLocaleString('pl-PL')} {cs.currency}
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-slate-900/50 border border-slate-700/50 px-3 py-2.5">
-                      <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Najwyższa wartość (PLN)</p>
-                      <p className={`font-semibold ${cs.maxValuePln.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
-                        {cs.maxValuePln.username}
-                        {cs.maxValuePln.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
-                      </p>
-                      <p className="text-indigo-400 font-bold mt-0.5">{formatPLN(cs.maxValuePln.valuePln)}</p>
-                    </div>
-                  </div>
-                </div>
+                  @{u.username}
+                  {u.id === currentUserId && <span className="ml-1 text-[10px] text-indigo-400 font-normal">(Ty)</span>}
+                </span>
               ))}
             </div>
-          </section>
+          </div>
         )}
 
-        {/* ── Category leaders ── */}
-        {categoryLeaders.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Crown className="w-5 h-5 text-amber-400" />
-              <h3 className="text-lg font-semibold text-slate-200">Liderzy kategorii</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-4">
-              Użytkownik z największą sumą wartości w każdej kategorii (wśród osób z wpisami &gt; 0).
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {categoryLeaders.map(({ category, leader }) => leader && (
-                <div
-                  key={category}
-                  className="flex items-center gap-3 bg-slate-800 rounded-xl border border-slate-700/60 px-4 py-3"
-                >
-                  <CategoryBadge category={category as AssetCategory} />
-                  <div className="min-w-0 flex-1">
-                    <p className={`font-semibold truncate ${leader.userId === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
-                      {leader.username}
-                      {leader.userId === currentUserId && <span className="text-xs text-indigo-500 ml-1">(Ty)</span>}
-                    </p>
-                    <p className="text-sm font-bold text-emerald-400">{formatPLN(leader.totalPln)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ── Shared assets ── */}
+        {/* ── 1. Wspólne aktywa (na górze) ── */}
         <section>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-lg">🤝</span>
+            <Trophy className="w-5 h-5 text-amber-400" />
             <h3 className="text-lg font-semibold text-slate-200">Wspólne aktywa</h3>
             <span className="text-slate-500 text-sm">({sharedAssets.length})</span>
           </div>
@@ -278,12 +185,11 @@ export default function StatsPage() {
             <div className="space-y-3">
               {sharedAssets.map(asset => (
                 <div key={asset.name} className="bg-slate-800 rounded-2xl border border-slate-700/60 p-5">
-                  <div className="flex items-center gap-3 mb-4">
+                  <div className="flex items-center gap-3 mb-4 flex-wrap">
                     <CategoryBadge category={asset.category as AssetCategory} />
                     <span className="font-semibold text-slate-100 text-base">{asset.name}</span>
                   </div>
 
-                  {/* Bar comparison */}
                   <div className="space-y-3">
                     {asset.holders.map((holder, idx) => {
                       const maxVal = asset.holders[0].value;
@@ -291,10 +197,11 @@ export default function StatsPage() {
                       const isMe   = holder.userId === currentUserId;
                       return (
                         <div key={holder.userId}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className={`text-sm font-medium ${isMe ? 'text-indigo-300' : 'text-slate-300'}`}>
-                              {holder.username}
-                              {isMe && <span className="ml-1.5 text-xs text-indigo-500">(Ty)</span>}
+                          <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                            <span className={`text-sm font-semibold ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                              Nick:{' '}
+                              <span className="font-mono text-slate-100">@{holder.username}</span>
+                              {isMe && <span className="ml-1 text-xs text-indigo-500 font-normal">(Ty)</span>}
                             </span>
                             <div className="flex items-center gap-3 text-sm">
                               {holder.quantity !== 1 && (
@@ -322,6 +229,168 @@ export default function StatsPage() {
             </div>
           )}
         </section>
+
+        {/* ── 2. Gotówka – jeden kafelek, wyłącznie waluta pierwotna ── */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Coins className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-lg font-semibold text-slate-200">Gotówka</h3>
+          </div>
+          <p className="text-sm text-slate-500 mb-4">
+            Ilość w <strong className="text-slate-400">walucie pierwotnej</strong> (bez przeliczania na PLN).
+          </p>
+
+          {!hasCash ? (
+            <div className="text-center py-10 bg-slate-800 rounded-2xl border border-dashed border-slate-700 text-slate-500 text-sm">
+              Brak zapisanej gotówki w kategorii „Gotówka”.
+            </div>
+          ) : (
+            <div className="bg-slate-800 rounded-2xl border border-emerald-500/20 p-6 space-y-8 shadow-lg shadow-black/20">
+              {cashByCurrency.filter(c => c.leaderboard.length > 0).map(block => (
+                <div key={block.currency}>
+                  <h4 className="text-sm font-bold text-emerald-400 mb-3 flex items-center gap-2">
+                    <span className="text-lg">{block.currency}</span>
+                    <span className="text-slate-500 font-normal text-xs">ranking po ilości</span>
+                  </h4>
+                  <ul className="space-y-2">
+                    {block.leaderboard.map(row => {
+                      const isMe = row.userId === currentUserId;
+                      return (
+                        <li
+                          key={row.userId}
+                          className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 border ${
+                            isMe ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-slate-900/40 border-slate-700/50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-slate-500 font-mono text-xs w-8 shrink-0">#{row.rank}</span>
+                            <span className={`truncate font-semibold ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                              Nick: <span className="font-mono">@{row.username}</span>
+                              {isMe && <span className="text-xs text-indigo-500 ml-1 font-normal">(Ty)</span>}
+                            </span>
+                          </div>
+                          <span className="font-mono text-sm text-emerald-300 shrink-0">
+                            {formatCashQuantity(row.quantity, block.currency)}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* ── 3. Ranking wg kategorii (wartość w PLN w kategorii) ── */}
+        {categoryRankings.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <Trophy className="w-5 h-5 text-violet-400" />
+              <h3 className="text-lg font-semibold text-slate-200">Ranking wg kategorii</h3>
+            </div>
+            <p className="text-sm text-slate-500 mb-6">
+              Kolejność od najwyższej sumy wartości w PLN w danej kategorii – z nickami użytkowników.
+            </p>
+            <div className="space-y-6">
+              {categoryRankings.map(({ category, rankings }) => (
+                <div
+                  key={category}
+                  className="bg-slate-800 rounded-2xl border border-slate-700/60 overflow-hidden"
+                >
+                  <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700 bg-slate-900/40">
+                    <CategoryBadge category={category as AssetCategory} />
+                    <span className="text-xs text-slate-500">{rankings.length} użytkowników</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-700 text-left text-slate-500">
+                          <th className="py-2 px-4 font-medium w-14">#</th>
+                          <th className="py-2 px-4 font-medium">Nick</th>
+                          <th className="py-2 px-4 font-medium text-right">Wartość (PLN)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankings.map(row => {
+                          const isMe = row.userId === currentUserId;
+                          return (
+                            <tr
+                              key={row.userId}
+                              className={`border-b border-slate-800 last:border-0 ${
+                                isMe ? 'bg-indigo-500/5' : 'hover:bg-slate-800/80'
+                              }`}
+                            >
+                              <td className="py-2.5 px-4 text-slate-500 font-mono">{row.rank}</td>
+                              <td className={`py-2.5 px-4 font-semibold ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                                <span className="font-mono">@{row.username}</span>
+                                {isMe && <span className="text-xs text-indigo-500 ml-1 font-normal">(Ty)</span>}
+                              </td>
+                              <td className="py-2.5 px-4 text-right font-bold text-emerald-400">
+                                {formatPLN(row.totalPln)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── 4. Portfele wg kategorii (macierz) ── */}
+        {presentCats.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="w-5 h-5 text-slate-400" />
+              <h3 className="text-lg font-semibold text-slate-200">Portfele wg kategorii</h3>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-700">
+                    <th className="text-left py-3 px-3 text-slate-400 font-medium w-36">Kategoria</th>
+                    {sortedUsers.map(u => (
+                      <th key={u.id} className={`text-right py-3 px-3 font-medium ${u.id === currentUserId ? 'text-indigo-400' : 'text-slate-400'}`}>
+                        <span className="font-mono text-xs">@{u.username}</span>
+                        {u.id === currentUserId && <span className="ml-1 text-[10px] text-indigo-500">(Ty)</span>}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {presentCats.map(cat => (
+                    <tr key={cat} className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-3">
+                        <CategoryBadge category={cat as AssetCategory} />
+                      </td>
+                      {sortedUsers.map(u => {
+                        const val = u.categories[cat] ?? 0;
+                        return (
+                          <td key={u.id} className={`text-right py-3 px-3 font-medium ${val > 0 ? (u.id === currentUserId ? 'text-indigo-300' : 'text-slate-200') : 'text-slate-600'}`}>
+                            {val > 0 ? formatPLN(val) : '–'}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-600">
+                    <td className="py-3 px-3 font-semibold text-slate-300">Łącznie</td>
+                    {sortedUsers.map(u => (
+                      <td key={u.id} className={`text-right py-3 px-3 font-bold text-base ${u.id === currentUserId ? 'text-indigo-400' : 'text-slate-200'}`}>
+                        {formatPLN(u.total_wealth)}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
       </main>
     </>

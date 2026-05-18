@@ -1,16 +1,15 @@
 /**
  * GET /api/stats
  *
- * Returns comparison data for all users:
- * - Per-user portfolio breakdown by category
- * - Assets shared by multiple users (same name), with each user's holdings
+ * Porównanie użytkowników: kategorie, gotówka (ilość w walucie pierwotnej),
+ * wspólne aktywa, rankingi wg kategorii.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
 import { ASSET_CATEGORIES } from '@/types';
 
-/** Gotówka rows use `name` = kod waluty (PLN, USD, EUR, DKK). */
+/** Gotówka: pole `name` = kod waluty (PLN, USD, EUR, DKK). */
 const KNOWN_CASH_CODES = new Set(['PLN', 'USD', 'EUR', 'DKK']);
 
 export async function GET(request: NextRequest) {
@@ -22,12 +21,10 @@ export async function GET(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
-  // All profiles (for usernames)
   const { data: profiles } = await admin
     .from('profiles')
     .select('id, username, total_wealth');
 
-  // All assets
   const { data: assets, error: fetchErr } = await admin
     .from('assets')
     .select('id, user_id, name, original_name, category, value, quantity');
@@ -37,10 +34,10 @@ export async function GET(request: NextRequest) {
   }
 
   const profileMap = Object.fromEntries(
-    (profiles ?? []).map(p => [p.id, { username: p.username, total_wealth: p.total_wealth }])
+    (profiles ?? []).map(p => [p.id, { username: p.username, total_wealth: p.total_wealth }]),
   );
 
-  // ── Category breakdown per user ────────────────────────────────────────────
+  // ── Category breakdown per user (wartości w PLN – do rankingu kategorii i tabeli) ──
   const categoryBreakdown: Record<string, Record<string, number>> = {};
   for (const asset of assets ?? []) {
     const uid = asset.user_id;
@@ -56,9 +53,9 @@ export async function GET(request: NextRequest) {
     categories:   categoryBreakdown[p.id] ?? {},
   }));
 
-  // ── Currency leaders (Gotówka + ISO code in name) ────────────────────────────
-  type CashAgg = Record<string, Record<string, { qty: number; valuePln: number }>>;
-  const cashByCurrency: CashAgg = {};
+  // ── Gotówka: jedna struktura – tylko ilość w walucie pierwotnej (bez PLN w UI) ──
+  type CashAgg = Record<string, Record<string, number>>;
+  const cashQtyByCurrency: CashAgg = {};
 
   for (const asset of assets ?? []) {
     if (asset.category !== 'Gotówka') continue;
@@ -66,51 +63,42 @@ export async function GET(request: NextRequest) {
     if (!KNOWN_CASH_CODES.has(code)) continue;
 
     const uid = asset.user_id;
-    if (!cashByCurrency[code]) cashByCurrency[code] = {};
-    if (!cashByCurrency[code][uid]) cashByCurrency[code][uid] = { qty: 0, valuePln: 0 };
-
-    cashByCurrency[code][uid].qty += Number(asset.quantity) || 0;
-    cashByCurrency[code][uid].valuePln += Number(asset.value) || 0;
+    if (!cashQtyByCurrency[code]) cashQtyByCurrency[code] = {};
+    cashQtyByCurrency[code][uid] = (cashQtyByCurrency[code][uid] ?? 0) + (Number(asset.quantity) || 0);
   }
 
-  const currencyStats = Object.entries(cashByCurrency).map(([currency, byUid]) => {
-    const rows = Object.entries(byUid).map(([userId, d]) => ({
-      userId,
-      username: profileMap[userId]?.username ?? '?',
-      quantity: d.qty,
-      valuePln: d.valuePln,
-    }));
+  /** Lista walut z rankingiem użytkowników po ilości (waluta pierwotna). */
+  const cashByCurrency = Object.entries(cashQtyByCurrency)
+    .map(([currency, byUid]) => {
+      const leaderboard = Object.entries(byUid)
+        .map(([userId, quantity]) => ({
+          rank:     0,
+          userId,
+          username: profileMap[userId]?.username ?? '?',
+          quantity,
+        }))
+        .sort((a, b) => b.quantity - a.quantity)
+        .map((row, i) => ({ ...row, rank: i + 1 }));
+      return { currency, leaderboard };
+    })
+    .sort((a, b) => a.currency.localeCompare(b.currency));
 
-    let maxQty = rows[0];
-    let maxVal = rows[0];
-    for (const r of rows) {
-      if (r.quantity > maxQty.quantity) maxQty = r;
-      if (r.valuePln > maxVal.valuePln) maxVal = r;
-    }
+  // ── Pełny ranking wg kategorii (wartość w PLN w danej kategorii) ──
+  const categoryRankings = ASSET_CATEGORIES.map(cat => {
+    const rankings = (profiles ?? [])
+      .map(p => ({
+        rank:     0,
+        userId:   p.id,
+        username: p.username,
+        totalPln: categoryBreakdown[p.id]?.[cat] ?? 0,
+      }))
+      .filter(r => r.totalPln > 0)
+      .sort((a, b) => b.totalPln - a.totalPln)
+      .map((r, i) => ({ ...r, rank: i + 1 }));
+    return { category: cat, rankings };
+  }).filter(e => e.rankings.length > 0);
 
-    return {
-      currency,
-      maxQuantity: maxQty,
-      maxValuePln: maxVal,
-      holders:     rows.sort((a, b) => b.valuePln - a.valuePln),
-    };
-  }).sort((a, b) => a.currency.localeCompare(b.currency));
-
-  // ── Category leaders: who has the most PLN in each category ──────────────────
-  const categoryLeaders = ASSET_CATEGORIES.map(cat => {
-    let best: { userId: string; username: string; totalPln: number } | null = null;
-    for (const p of profiles ?? []) {
-      const total = categoryBreakdown[p.id]?.[cat] ?? 0;
-      if (total <= 0) continue;
-      if (!best || total > best.totalPln) {
-        best = { userId: p.id, username: p.username, totalPln: total };
-      }
-    }
-    return { category: cat, leader: best };
-  }).filter(e => e.leader !== null);
-
-  // ── Shared assets: same name across multiple users ─────────────────────────
-  // Group by canonical name (original_name preferred, else name)
+  // ── Wspólne aktywa ──────────────────────────────────────────────────────────
   const byName: Record<string, { userId: string; username: string; value: number; quantity: number; category: string }[]> = {};
 
   for (const asset of assets ?? []) {
@@ -126,12 +114,8 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Only keep assets owned by ≥2 different users
   const sharedAssets = Object.entries(byName)
-    .filter(([, holders]) => {
-      const uids = new Set(holders.map(h => h.userId));
-      return uids.size >= 2;
-    })
+    .filter(([, holders]) => new Set(holders.map(h => h.userId)).size >= 2)
     .map(([name, holders]) => ({
       name,
       category: holders[0].category,
@@ -146,8 +130,8 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     users,
     sharedAssets,
-    currencyStats,
-    categoryLeaders,
+    cashByCurrency,
+    categoryRankings,
     currentUserId: user.id,
   });
 }
