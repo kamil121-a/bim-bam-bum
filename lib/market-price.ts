@@ -185,12 +185,15 @@ export async function extractMarketPrice(
     `2. BEZWZGLĘDNIE IGNORUJ: kapitalizację rynkową (miliardy/tryliony), wolumen obrotu (Volume), ` +
     `zmianę procentową (np. +1.5%), ceny docelowe analityków (Target Price) ` +
     `oraz ceny historyczne sprzed miesięcy.\n` +
-    `3. Kontekst walutowy:\n` +
-    `   - Akcje USA (.US), krypto (BTC), kruszce (złoto/srebro) – cena przy '$' lub 'USD' → "currency": "USD"\n` +
-    `   - Polska spółka (.WA / .PL) – cena przy 'zł' lub 'PLN' → "currency": "PLN"\n` +
-    `   - Spółki UK, LSE (.UK / .L) – cena przy '£' lub 'GBP' → "currency": "GBP"\n` +
-    `     WAŻNE: jeśli cena UK jest w pensach (GBX, np. 8023p), podziel przez 100 aby otrzymać GBP.\n` +
-    `   - Spółki europejskie (.DE / .FR / .AS / .EU) – cena przy '€' lub 'EUR' → "currency": "EUR"\n` +
+    `3. Kontekst walutowy – ZAWSZE patrz na FAKTYCZNY SYMBOL WALUTY w tekście wyników:\n` +
+    `   - '$' lub 'USD' obok ceny → "currency": "USD"\n` +
+    `   - 'zł' lub 'PLN' obok ceny → "currency": "PLN"\n` +
+    `   - '£' lub 'GBP' obok ceny → "currency": "GBP"\n` +
+    `     WAŻNE: jeśli cena LSE jest w pensach (GBX, np. 8023p), podziel przez 100 aby otrzymać GBP.\n` +
+    `   - '€' lub 'EUR' obok ceny → "currency": "EUR"\n` +
+    `   KLUCZOWE: Akcje/ETF notowane na LSE (.UK / .L) MOGĄ być w USD lub GBP – nie zakładaj.\n` +
+    `   Np. ETF towarowe (złoto, ropa) i ETF globalne na LSE są często denominowane w USD.\n` +
+    `   Jeśli widzisz '$' lub 'USD' obok ceny dla spółki UK → "currency": "USD", nie GBP!\n` +
     `4. Jeśli nie ma jasnej, niepodważalnej aktualnej ceny giełdowej – ` +
     `NIE ZGADUJ, nie halucynuj. Zwróć "success": false.\n\n` +
     `Zwróć WYŁĄCZNIE surowy JSON (zero markdown, zero \`\`\`json):\n` +

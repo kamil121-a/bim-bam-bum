@@ -80,13 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let mounted = true;
 
     /**
-     * Session guard strategy
-     * ──────────────────────
-     * Step A  init() – calls getUser() which validates the token SERVER-SIDE.
-     *   • Valid session  → fetch profile, set user, set loading=false.
-     *   • Invalid/error  → signOut() (clears stale localStorage) → set user=null.
-     *   This breaks the "must clear browser data" loop because stale tokens
-     *   are caught here before onAuthStateChange sees them.
+     * Session guard strategy (two-step, non-blocking)
+     * ─────────────────────────────────────────────────
+     * Step A  init() – FAST PATH via getSession() (reads localStorage, zero network)
+     *   • Token found & not expired → show user instantly, unblock UI.
+     *   • No token / expired        → show login page instantly.
+     *   Background: getUser() validates the token with the Supabase server.
+     *     If invalid → silent signOut, clear user state.
+     *
+     * This eliminates the "page hangs until browser history is cleared" bug
+     * caused by getUser() making a slow/hung network request on every page load.
      *
      * Step B  onAuthStateChange – handles real-time transitions AFTER init.
      *   • INITIAL_SESSION is SKIPPED (init already handled it).
@@ -94,45 +97,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      *   • SIGNED_IN / TOKEN_REFRESHED / SIGNED_OUT → normal state update.
      */
     const init = async () => {
-      // Safety net: if getUser() never resolves (slow/blocked Supabase or stale token),
-      // force loading=false after 8 s so the app doesn't hang forever.
-      // timedOut flag prevents the try-block from re-setting user after the timer fired.
-      let timedOut = false;
-      const safetyTimer = setTimeout(() => {
-        if (!mounted) return;
-        timedOut = true;
-        console.warn('[auth] init() timed out after 8 s – clearing session and unblocking UI');
-        supabase.auth.signOut().catch(() => {});
-        setUser(null);
-        setLoading(false);
-      }, 8_000);
-
       try {
-        const { data: { user: serverUser }, error } = await supabase.auth.getUser();
-        clearTimeout(safetyTimer);
+        // ── Fast path: read cached session from localStorage (no network) ──────
+        const { data: { session } } = await supabase.auth.getSession();
 
-        if (!mounted || timedOut) return;  // safety timer already ran – don't overwrite
+        if (!mounted) return;
 
-        if (error || !serverUser) {
-          if (error) {
-            console.warn('[auth] getUser() failed – clearing stale session:', error.message);
-            await supabase.auth.signOut().catch(() => {});
-          }
+        if (!session?.user) {
+          // No session stored → show login immediately
           setUser(null);
           setLoading(false);
           return;
         }
 
-        const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
-        if (mounted) {
-          setUser(profile);
-          setLoading(false);
-        }
+        // Session found → show user from cache, unblock UI right away
+        const cachedUser: AuthUser = {
+          id:       session.user.id,
+          email:    session.user.email!,
+          username: session.user.email!.split('@')[0],  // placeholder until profile loads
+        };
+        setUser(cachedUser);
+        setLoading(false);  // ← UI unblocked instantly
+
+        // ── Background: validate token with server + load real profile ────────
+        // If the token is stale/revoked, sign out silently after the page loads.
+        supabase.auth.getUser()
+          .then(async ({ data: { user: serverUser }, error }) => {
+            if (!mounted) return;
+            if (error || !serverUser) {
+              console.warn('[auth] background token validation failed – signing out:', error?.message);
+              await supabase.auth.signOut().catch(() => {});
+              if (mounted) setUser(null);
+              return;
+            }
+            // Replace placeholder with real profile data
+            const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
+            if (mounted) setUser(profile);
+          })
+          .catch((err) => {
+            console.warn('[auth] background getUser() error:', err instanceof Error ? err.message : err);
+          });
+
       } catch (err) {
-        clearTimeout(safetyTimer);
-        console.error('[auth] init() threw unexpectedly:', err);
+        console.error('[auth] init() error:', err);
         if (mounted) {
-          await supabase.auth.signOut().catch(() => {});
           setUser(null);
           setLoading(false);
         }
@@ -160,10 +168,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
-          // Keep loading=true while fetchProfile is in-flight.
-          // Without this, dashboard sees (loading=false, user=null) for a brief
-          // moment and immediately redirects back to /login – the "login loop" bug.
-          if (mounted) setLoading(true);
+          // For a fresh SIGNED_IN (login form submit), hold loading=true until
+          // profile is ready – prevents the dashboard from briefly seeing null user
+          // and redirecting to /login. For TOKEN_REFRESHED, user is already shown
+          // so we update silently without touching the loading flag.
+          if (event === 'SIGNED_IN' && mounted) setLoading(true);
           const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
           if (mounted) { setUser(profile); setLoading(false); }
         } else {
