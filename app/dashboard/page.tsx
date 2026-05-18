@@ -73,12 +73,13 @@ export default function DashboardPage() {
       const data = await res.json();
       if (res.ok) {
         setAssets(data.assets);
+        router.refresh();  // przeładuj dane serwera (total_wealth w nagłówku itp.)
         const msg =
           data.failed > 0
-            ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się).`
+            ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się wycenić).`
             : `Zaktualizowano ${data.updated} aktywów według aktualnych cen rynkowych.`;
         setRefreshMsg(msg);
-        setTimeout(() => setRefreshMsg(null), 5000);
+        setTimeout(() => setRefreshMsg(null), 6000);
       } else {
         setRefreshMsg('Błąd odświeżania. Spróbuj ponownie.');
       }

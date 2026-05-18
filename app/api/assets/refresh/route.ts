@@ -1,70 +1,122 @@
+/**
+ * POST /api/assets/refresh
+ *
+ * Odświeża wartości aktywów z kategorii "Finanse" (akcje, krypto, ETF-y)
+ * używając Tavily Search + NBP + OpenAI (gpt-4o-mini).
+ *
+ * Aktywa z innych kategorii (Nieruchomości, Elektronika, Inne) są pomijane
+ * – ich wartość nie zmienia się codziennie na rynku publicznym.
+ *
+ * Po aktualizacji rekordów asset endpoint zwraca świeżą listę aktywów
+ * i aktualizuje total_wealth w tabeli profiles.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
-import { estimateValue } from '@/lib/valuate';
+import { getMarketUnitPrice } from '@/lib/market-price';
 import type { Asset } from '@/types';
 
-export async function POST(request: NextRequest) {
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+export const maxDuration = 10;
 
+export async function POST(request: NextRequest) {
+  // ── Auth ─────────────────────────────────────────────────────────────────────
+  const supabase = createSupabaseServerClient(request);
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Fetch user's assets
-  const { data: assets, error: fetchError } = await supabase
+  // ── Pobierz wszystkie aktywa użytkownika ─────────────────────────────────────
+  const { data: allAssets, error: fetchError } = await supabase
     .from('assets')
     .select('*')
     .eq('user_id', user.id);
 
   if (fetchError) {
-    console.error('[POST /api/assets/refresh] fetch:', fetchError);
+    console.error('[refresh] fetch assets error:', fetchError.message);
     return NextResponse.json({ error: 'Błąd pobierania aktywów.' }, { status: 500 });
   }
-
-  if (!assets || assets.length === 0) {
-    return NextResponse.json({ updated: 0, assets: [] });
+  if (!allAssets || allAssets.length === 0) {
+    return NextResponse.json({ updated: 0, failed: 0, assets: [] });
   }
 
   const admin = createSupabaseAdminClient();
 
-  // Re-valuate all assets in parallel, skip failed ones
-  const results = await Promise.allSettled(
-    (assets as Asset[]).map(async (asset) => {
-      const qty = asset.quantity ?? 1;
-      const valuation = await estimateValue(asset.name, qty);
+  // ── Odśwież aktywa giełdowe (kategoria Finanse) – po kolei, nie równolegle ───
+  // (Tavily i OpenAI mają limity concurrent requests na darmowym planie)
+  const assets = allAssets as Asset[];
+  let updated  = 0;
+  let failed   = 0;
 
-        if (valuation.estimatedValue > 0) {
-          const { error: updateError } = await admin
-            .from('assets')
-            .update({
-              value: Math.round(valuation.estimatedValue),
-              reasoning: valuation.reasoning,
-            })
-            .eq('id', asset.id);
+  for (const asset of assets) {
+    if (asset.category !== 'Finanse') continue;  // skip non-market assets
 
-          if (updateError) {
-            console.error(`[refresh] Supabase update error for asset ${asset.id}:`, {
-              message: updateError.message,
-              code: updateError.code,
-              details: updateError.details,
-              hint: updateError.hint,
-            });
-            throw updateError;
-          }
-        }
+    const ticker = (asset.name ?? '').trim();
+    if (!ticker) { failed++; continue; }
 
-      return { id: asset.id, newValue: valuation.estimatedValue };
-    })
-  );
+    try {
+      console.log(`[refresh] Odświeżam: "${ticker}" (qty: ${asset.quantity})`);
 
-  const updated = results.filter((r) => r.status === 'fulfilled').length;
-  const failed = results.length - updated;
+      const priceData = await getMarketUnitPrice(ticker);
 
-  // Fetch the refreshed list to return to client
+      if (!priceData || priceData.unitPricePLN <= 0) {
+        console.warn(`[refresh] Brak ceny dla "${ticker}" – pomijam`);
+        failed++;
+        continue;
+      }
+
+      const qty      = asset.quantity ?? 1;
+      const newValue = Math.round(priceData.unitPricePLN * qty);
+
+      console.log(
+        `[refresh] "${ticker}": ${priceData.unitPricePLN.toFixed(2)} PLN/szt. × ${qty}`,
+        `= ${newValue} PLN`,
+      );
+
+      const { error: updateErr } = await admin
+        .from('assets')
+        .update({
+          value:     newValue,
+          reasoning: priceData.reasoning,
+        })
+        .eq('id', asset.id);
+
+      if (updateErr) {
+        console.error(`[refresh] Supabase update error for "${ticker}":`, updateErr.message);
+        failed++;
+      } else {
+        updated++;
+      }
+
+    } catch (err) {
+      console.error(`[refresh] Exception for "${ticker}":`, err instanceof Error ? err.message : err);
+      failed++;
+    }
+  }
+
+  // ── Przelicz i zapisz total_wealth w profiles ────────────────────────────────
+  try {
+    const { data: freshAssets } = await supabase
+      .from('assets')
+      .select('value')
+      .eq('user_id', user.id);
+
+    const totalWealth = (freshAssets ?? []).reduce(
+      (sum: number, a: { value: number }) => sum + (a.value ?? 0),
+      0,
+    );
+
+    await admin
+      .from('profiles')
+      .update({ total_wealth: totalWealth })
+      .eq('id', user.id);
+
+    console.log(`[refresh] total_wealth zaktualizowany: ${totalWealth} PLN`);
+  } catch (err) {
+    console.warn('[refresh] total_wealth update failed:', err instanceof Error ? err.message : err);
+  }
+
+  // ── Zwróć świeżą listę aktywów ───────────────────────────────────────────────
   const { data: refreshedAssets } = await supabase
     .from('assets')
     .select('*')
