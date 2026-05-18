@@ -40,29 +40,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ updated: 0, failed: 0, assets: [] });
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin        = createSupabaseAdminClient();
+  const assets       = allAssets as Asset[];
+  const financeAssets = assets.filter(a => a.category === 'Finanse');
 
-  // ── Odśwież aktywa giełdowe (kategoria Finanse) – po kolei, nie równolegle ───
-  // (Tavily i OpenAI mają limity concurrent requests na darmowym planie)
-  const assets = allAssets as Asset[];
-  let updated  = 0;
-  let failed   = 0;
+  // ── Odśwież wszystkie aktywa giełdowe równolegle (Promise.all) ────────────────
+  // Promise.all wysyła wszystkie zapytania jednocześnie – eliminuje timeouty
+  // powodowane sekwencyjnym await w pętli for.
+  const results = await Promise.allSettled(
+    financeAssets.map(async (asset): Promise<'ok' | 'fail'> => {
+      const ticker = (asset.name ?? '').trim();
+      if (!ticker) return 'fail';
 
-  for (const asset of assets) {
-    if (asset.category !== 'Finanse') continue;  // skip non-market assets
-
-    const ticker = (asset.name ?? '').trim();
-    if (!ticker) { failed++; continue; }
-
-    try {
       console.log(`[refresh] Odświeżam: "${ticker}" (qty: ${asset.quantity})`);
 
       const priceData = await getMarketUnitPrice(ticker);
 
       if (!priceData || priceData.unitPricePLN <= 0) {
         console.warn(`[refresh] Brak ceny dla "${ticker}" – pomijam`);
-        failed++;
-        continue;
+        return 'fail';
       }
 
       const qty      = asset.quantity ?? 1;
@@ -75,24 +71,19 @@ export async function POST(request: NextRequest) {
 
       const { error: updateErr } = await admin
         .from('assets')
-        .update({
-          value:     newValue,
-          reasoning: priceData.reasoning,
-        })
+        .update({ value: newValue, reasoning: priceData.reasoning })
         .eq('id', asset.id);
 
       if (updateErr) {
         console.error(`[refresh] Supabase update error for "${ticker}":`, updateErr.message);
-        failed++;
-      } else {
-        updated++;
+        return 'fail';
       }
+      return 'ok';
+    }),
+  );
 
-    } catch (err) {
-      console.error(`[refresh] Exception for "${ticker}":`, err instanceof Error ? err.message : err);
-      failed++;
-    }
-  }
+  const updated = results.filter(r => r.status === 'fulfilled' && r.value === 'ok').length;
+  const failed  = results.length - updated;
 
   // ── Przelicz i zapisz total_wealth w profiles ────────────────────────────────
   try {

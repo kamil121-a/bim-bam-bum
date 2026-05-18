@@ -15,9 +15,7 @@ import type { ValuationResult } from '@/lib/valuate';
 import {
   buildTavilyQuery,
   searchTavilyMarket,
-  fetchNbpUsdPln,
   extractMarketPrice,
-  isForeignTicker,
 } from '@/lib/market-price';
 
 export const maxDuration = 10;
@@ -76,20 +74,8 @@ export async function POST(request: NextRequest) {
       throw new Error('Tavily nie zwróciło żadnych wyników – sprawdź klucz API lub połączenie.');
     }
 
-    // 2. Dla aktywów zagranicznych (USD) pobierz OFICJALNY kurs NBP
-    //    i przekaż go do OpenAI, żeby nie szacował kursu z pamięci
-    let usdPln: number | undefined;
-    if (isForeignTicker(ticker)) {
-      try {
-        usdPln = await fetchNbpUsdPln();
-        console.log(`[NBP] Oficjalny kurs USD/PLN: ${usdPln}`);
-      } catch {
-        console.warn('[NBP] Nie udało się pobrać kursu – AI użyje własnego szacunku');
-      }
-    }
-
-    // 3. Wyciągnij cenę jednostkową przez OpenAI (z kursem NBP jeśli dostępny)
-    const priceData = await extractMarketPrice(displayTicker, context, usdPln);
+    // 2. Wyciągnij cenę przez OpenAI; konwersja USD→PLN via NBP jest wewnątrz extractMarketPrice
+    const priceData = await extractMarketPrice(displayTicker, context);
 
     if (!priceData || priceData.unitPricePLN <= 0) {
       throw new Error('Nie udało się automatycznie wycenić tego symbolu. Upewnij się, że wpisałeś go poprawnie.');
@@ -110,7 +96,7 @@ export async function POST(request: NextRequest) {
       unitPrice,
       currency:          'PLN',
       confidence:        'medium',
-      source:            `Tavily + GPT-4o-mini (${displayTicker})${usdPln ? ` + NBP ${usdPln.toFixed(4)}` : ''}`,
+      source:            `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP USD/PLN`,
       suggestedCategory: 'Finanse',
       aiCategory:        'Giełda',
       reasoning:         priceData.reasoning,
