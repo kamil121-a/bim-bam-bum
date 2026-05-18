@@ -12,14 +12,27 @@ import { PlusCircle, TrendingUp, Package, Layers, RefreshCw } from 'lucide-react
 
 const CATEGORY_ORDER: AssetCategory[] = ['Finanse', 'Nieruchomości', 'Elektronika', 'Inne'];
 
+// Skeleton placeholder while assets are loading
+function AssetSkeleton() {
+  return (
+    <div className="space-y-2">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [fetchLoading, setFetchLoading] = useState(true);
+  const [fetchLoading, setFetchLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
+  // IDs of assets that were just refreshed — drives green checkmark in AssetCard
+  const [refreshedIds, setRefreshedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -28,9 +41,7 @@ export default function DashboardPage() {
   const fetchAssets = useCallback(async () => {
     setFetchLoading(true);
     try {
-      // AbortSignal.timeout ensures the spinner never hangs if the API route
-      // doesn't respond (Vercel cold start, blocked external request, etc.)
-      const res = await fetch('/api/assets', { signal: AbortSignal.timeout(10_000) });
+      const res = await fetch('/api/assets', { signal: AbortSignal.timeout(12_000) });
       if (res.ok) {
         const data = await res.json();
         setAssets(data.assets ?? []);
@@ -38,7 +49,6 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('[dashboard] fetchAssets error:', err);
     } finally {
-      // Always unblock the UI – even if the request timed out or threw
       setFetchLoading(false);
     }
   }, []);
@@ -81,7 +91,12 @@ export default function DashboardPage() {
       const data = await res.json();
       if (res.ok) {
         setAssets(data.assets);
-        router.refresh();  // przeładuj dane serwera (total_wealth w nagłówku itp.)
+        // Highlight successfully refreshed assets with green checkmarks
+        if (data.updatedIds?.length) {
+          setRefreshedIds(new Set(data.updatedIds));
+          setTimeout(() => setRefreshedIds(new Set()), 4_500);
+        }
+        router.refresh();
         const msg =
           data.failed > 0
             ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się wycenić).`
@@ -106,7 +121,9 @@ export default function DashboardPage() {
     total: assets.filter(a => a.category === cat).reduce((s, a) => s + a.value, 0),
   })).filter(g => g.assets.length > 0);
 
-  if (loading || fetchLoading) {
+  // Only block the WHOLE page during auth check (very fast with getSession fast-path).
+  // Assets load in the background without blocking the full page render.
+  if (loading) {
     return (
       <>
         <Navigation />
@@ -131,7 +148,7 @@ export default function DashboardPage() {
             <p className="text-gray-500 mt-1">Oto przegląd Twojego majątku</p>
           </div>
 
-          {assets.length > 0 && (
+          {!fetchLoading && assets.length > 0 && (
             <button
               onClick={handleRefresh}
               disabled={refreshing}
@@ -160,7 +177,13 @@ export default function DashboardPage() {
               </div>
               <span className="text-sm font-medium opacity-80">Łączny majątek</span>
             </div>
-            <p className="text-3xl font-bold">{formatPLN(totalValue)}</p>
+            <p className="text-3xl font-bold">
+              {fetchLoading ? (
+                <span className="inline-block w-32 h-8 bg-white/20 rounded-lg animate-pulse" />
+              ) : (
+                formatPLN(totalValue)
+              )}
+            </p>
           </div>
 
           <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
@@ -170,7 +193,13 @@ export default function DashboardPage() {
               </div>
               <span className="text-sm font-medium text-gray-500">Liczba aktywów</span>
             </div>
-            <p className="text-3xl font-bold text-gray-900">{assets.length}</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {fetchLoading ? (
+                <span className="inline-block w-10 h-8 bg-gray-100 rounded-lg animate-pulse" />
+              ) : (
+                assets.length
+              )}
+            </p>
           </div>
 
           <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
@@ -180,12 +209,20 @@ export default function DashboardPage() {
               </div>
               <span className="text-sm font-medium text-gray-500">Kategorie</span>
             </div>
-            <p className="text-3xl font-bold text-gray-900">{byCategory.length}</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {fetchLoading ? (
+                <span className="inline-block w-10 h-8 bg-gray-100 rounded-lg animate-pulse" />
+              ) : (
+                byCategory.length
+              )}
+            </p>
           </div>
         </div>
 
-        {/* Assets list */}
-        {assets.length === 0 ? (
+        {/* Assets list — skeleton while loading, then real content */}
+        {fetchLoading ? (
+          <AssetSkeleton />
+        ) : assets.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-200">
             <div className="text-5xl mb-4">💼</div>
             <h3 className="text-xl font-semibold text-gray-700 mb-2">Brak aktywów</h3>
@@ -217,6 +254,7 @@ export default function DashboardPage() {
                       onDelete={handleDelete}
                       onEdit={handleEdit}
                       deleting={deletingId === asset.id}
+                      refreshed={refreshedIds.has(asset.id)}
                     />
                   ))}
                 </div>

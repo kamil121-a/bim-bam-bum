@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Trash2, Pencil, Check, X, Info } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Trash2, Pencil, Check, X, Info, CheckCircle2 } from 'lucide-react';
 import type { Asset } from '@/types';
 import CategoryBadge from './CategoryBadge';
 
@@ -23,20 +23,30 @@ function formatQuantity(qty: number): string {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  asset:    Asset;
-  onDelete: (id: string) => void;
-  onEdit:   (id: string, changes: { name: string; quantity: number }) => Promise<void>;
-  deleting: boolean;
+  asset:     Asset;
+  onDelete:  (id: string) => void;
+  onEdit:    (id: string, changes: { name: string; quantity: number }) => Promise<void>;
+  deleting:  boolean;
+  refreshed?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function AssetCard({ asset, onDelete, onEdit, deleting }: Props) {
+export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed }: Props) {
   const [editing,   setEditing]   = useState(false);
   const [editName,  setEditName]  = useState(asset.name);
   const [editQty,   setEditQty]   = useState(String(asset.quantity ?? 1));
   const [saving,    setSaving]    = useState(false);
   const [editError, setEditError] = useState('');
+  // Controls the green checkmark badge — stays visible for 3.5 s after refresh
+  const [showCheck, setShowCheck] = useState(false);
+
+  useEffect(() => {
+    if (!refreshed) return;
+    setShowCheck(true);
+    const t = setTimeout(() => setShowCheck(false), 3_500);
+    return () => clearTimeout(t);
+  }, [refreshed]);
 
   const qtyLabel         = formatQuantity(asset.quantity ?? 1);
   const showOriginalName = Boolean(
@@ -153,7 +163,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting }: Props) 
   // ── View mode ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+    <div className={`flex items-center justify-between p-4 bg-white rounded-xl border shadow-sm hover:shadow-md transition-all ${showCheck ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100'}`}>
 
       {/* Left: name + meta */}
       <div className="flex flex-col gap-1 min-w-0">
@@ -197,6 +207,16 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting }: Props) 
 
       {/* Right: value + action buttons */}
       <div className="flex items-center gap-1.5 ml-4 shrink-0">
+        {/* Green checkmark – slides in after a successful price refresh */}
+        <div
+          className={`flex items-center gap-1 transition-all duration-500 overflow-hidden ${
+            showCheck ? 'opacity-100 max-w-[7rem]' : 'opacity-0 max-w-0'
+          }`}
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span className="text-xs font-medium text-emerald-600 whitespace-nowrap">Zaktualizowano</span>
+        </div>
+
         <span className="font-bold text-lg text-indigo-700 mr-1">{formatPLN(asset.value)}</span>
 
         {/* Edit button */}

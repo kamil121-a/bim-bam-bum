@@ -45,8 +45,8 @@ export async function POST(request: NextRequest) {
   const financeAssets = assets.filter(a => a.category === 'Finanse');
 
   // ── Odśwież wszystkie aktywa giełdowe równolegle (Promise.all) ────────────────
-  // Promise.all wysyła wszystkie zapytania jednocześnie – eliminuje timeouty
-  // powodowane sekwencyjnym await w pętli for.
+  const updatedIds: string[] = [];
+
   const results = await Promise.allSettled(
     financeAssets.map(async (asset): Promise<'ok' | 'fail'> => {
       const ticker = (asset.name ?? '').trim();
@@ -78,6 +78,8 @@ export async function POST(request: NextRequest) {
         console.error(`[refresh] Supabase update error for "${ticker}":`, updateErr.message);
         return 'fail';
       }
+
+      updatedIds.push(asset.id);
       return 'ok';
     }),
   );
@@ -117,6 +119,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     updated,
     failed,
+    updatedIds,
     assets: refreshedAssets ?? [],
   });
 }
