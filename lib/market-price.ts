@@ -45,30 +45,30 @@ const METAL_YAHOO: Record<string, string> = {
 export function buildTavilyQuery(raw: string): string {
   const t = raw.trim().toUpperCase();
 
-  // Polish GPW: KRUK.PL → KRUK.WA on Yahoo Finance (PLN quotes)
+  // Polish GPW: KRUK.PL → KRUK.WA, suggest Yahoo Finance but don't lock to it
   if (t.endsWith('.PL')) {
     const sym = t.slice(0, -3);
-    return `site:finance.yahoo.com ${sym}.WA quote price 2026`;
+    return `Yahoo Finance ${sym}.WA aktualny kurs cena akcji 2026`;
   }
 
-  // US stocks: NVDA.US → NVDA on Yahoo Finance (USD quotes)
+  // US stocks: NVDA.US → NVDA
   if (t.endsWith('.US')) {
     const sym = t.slice(0, -3);
-    return `site:finance.yahoo.com ${sym} quote price 2026`;
+    return `Yahoo Finance ${sym} stock price current 2026`;
   }
 
   // Crypto
   if (CRYPTO_YAHOO[t]) {
-    return `site:finance.yahoo.com ${CRYPTO_YAHOO[t]} quote price 2026`;
+    return `Yahoo Finance ${CRYPTO_YAHOO[t]} price current 2026`;
   }
 
   // Precious metals (Yahoo futures)
   if (METAL_YAHOO[t]) {
-    return `site:finance.yahoo.com ${METAL_YAHOO[t]} quote price 2026`;
+    return `Yahoo Finance ${METAL_YAHOO[t]} price current 2026`;
   }
 
-  // Fallback: bare ticker (e.g. "TSLA", "MSFT")
-  return `site:finance.yahoo.com ${t} quote price 2026`;
+  // Fallback: any user input (e.g. "Złoto", bare "TSLA", Polish company name)
+  return `Yahoo Finance ${raw} aktualna cena kurs giełda 2026`;
 }
 
 // ─── isForeignTicker helper (still needed for callers) ───────────────────────
@@ -148,11 +148,13 @@ export async function extractMarketPrice(
   context: string,
 ): Promise<MarketPriceResult | null> {
   const systemPrompt =
-    `Twoim jedynym zadaniem jest wyciągnięcie aktualnej ceny aktywa "${ticker}" ` +
-    `z dostarczonych wyników wyszukiwania z portalu Yahoo Finance.\n` +
-    `Zasady:\n` +
-    `- Jeśli cena jest w USD (giełda USA, krypto, kruszce) → "currency": "USD"\n` +
-    `- Jeśli cena jest w PLN (polskie spółki .WA na Yahoo Finance) → "currency": "PLN"\n` +
+    `Wyciągnij aktualną cenę aktywa "${ticker}" z dostarczonych wyników wyszukiwania. ` +
+    `Priorytetowo traktuj dane z Yahoo Finance (tickery z końcówką .WA lub czyste amerykańskie), ` +
+    `ale jeśli ich brakuje, użyj jakichkolwiek innych aktualnych danych finansowych ` +
+    `z roku 2026 zawartych w tekście.\n` +
+    `Zasady dotyczące waluty:\n` +
+    `- Cena w USD (giełda USA, krypto, kruszce) → "currency": "USD"\n` +
+    `- Cena w PLN (polskie spółki .WA) → "currency": "PLN"\n` +
     `- Szukaj najświeższych danych (maj 2026). Ignoruj stare artykuły i prognozy.\n` +
     `\nZwróć WYŁĄCZNIE czysty JSON (bez markdown, bez \`\`\`json):\n` +
     `{ "currency": "USD", "price": <liczba>, "reasoning": "<krótkie źródło>" }\n` +
