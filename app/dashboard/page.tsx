@@ -27,12 +27,20 @@ export default function DashboardPage() {
 
   const fetchAssets = useCallback(async () => {
     setFetchLoading(true);
-    const res = await fetch('/api/assets');
-    if (res.ok) {
-      const data = await res.json();
-      setAssets(data.assets);
+    try {
+      // AbortSignal.timeout ensures the spinner never hangs if the API route
+      // doesn't respond (Vercel cold start, blocked external request, etc.)
+      const res = await fetch('/api/assets', { signal: AbortSignal.timeout(10_000) });
+      if (res.ok) {
+        const data = await res.json();
+        setAssets(data.assets ?? []);
+      }
+    } catch (err) {
+      console.error('[dashboard] fetchAssets error:', err);
+    } finally {
+      // Always unblock the UI – even if the request timed out or threw
+      setFetchLoading(false);
     }
-    setFetchLoading(false);
   }, []);
 
   useEffect(() => {

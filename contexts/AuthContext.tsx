@@ -94,24 +94,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      *   • SIGNED_IN / TOKEN_REFRESHED / SIGNED_OUT → normal state update.
      */
     const init = async () => {
-      const { data: { user: serverUser }, error } = await supabase.auth.getUser();
-
-      if (!mounted) return;
-
-      if (error || !serverUser) {
-        if (error) {
-          console.warn('[auth] getUser() failed – clearing stale session:', error.message);
-          await supabase.auth.signOut().catch(() => {});
-        }
+      // Safety net: if getUser() never resolves (slow/blocked Supabase or stale token),
+      // force loading=false after 6 s so the app doesn't hang forever.
+      const safetyTimer = setTimeout(() => {
+        if (!mounted) return;
+        console.warn('[auth] init() timed out after 6 s – clearing session and unblocking UI');
+        supabase.auth.signOut().catch(() => {});
         setUser(null);
         setLoading(false);
-        return;
-      }
+      }, 6_000);
 
-      const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
-      if (mounted) {
-        setUser(profile);
-        setLoading(false);
+      try {
+        const { data: { user: serverUser }, error } = await supabase.auth.getUser();
+        clearTimeout(safetyTimer);
+
+        if (!mounted) return;
+
+        if (error || !serverUser) {
+          if (error) {
+            console.warn('[auth] getUser() failed – clearing stale session:', error.message);
+            await supabase.auth.signOut().catch(() => {});
+          }
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
+        if (mounted) {
+          setUser(profile);
+          setLoading(false);
+        }
+      } catch (err) {
+        clearTimeout(safetyTimer);
+        console.error('[auth] init() threw unexpectedly:', err);
+        if (mounted) {
+          await supabase.auth.signOut().catch(() => {});
+          setUser(null);
+          setLoading(false);
+        }
       }
     };
 
