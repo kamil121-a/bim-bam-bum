@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { createSupabaseServerClient } from '@/lib/supabase';
 import type { AssetCategory } from '@/types';
 
+export const maxDuration = 10;
+
 export async function GET(request: NextRequest) {
   const supabase = createSupabaseServerClient(request);
   const {

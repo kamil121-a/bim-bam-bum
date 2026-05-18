@@ -71,6 +71,11 @@ export default function AddAssetPage() {
 
   const handleValuate = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Guard: button is already disabled while valuating, but this prevents
+    // any theoretical double-fire (e.g. keyboard Enter + mouse click race).
+    if (step === 'valuating') return;
+
     if (!name.trim() || name.trim().length < 2) {
       setError('Wpisz co najmniej 2 znaki nazwy aktywa.');
       return;
@@ -80,6 +85,7 @@ export default function AddAssetPage() {
       setError('Podaj prawidłową ilość (większą niż 0).');
       return;
     }
+
     setError('');
     setStep('valuating');
 
@@ -89,16 +95,36 @@ export default function AddAssetPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), quantity: qty }),
       });
+
       if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.error ?? 'Błąd wyceny');
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as { error?: string }).error ?? `Błąd HTTP ${res.status}`);
       }
+
       const data: ValuationResult = await res.json();
+
+      // API returns estimatedValue = 0 when OpenAI fails or times out.
+      // Show an error and stay on the input step so the user can retry.
+      if (data.estimatedValue === 0) {
+        setError(
+          data.reasoning.startsWith('Nie udało się') || data.reasoning.startsWith('Błąd') || data.reasoning.startsWith('Przekroczono')
+            ? data.reasoning
+            : 'Nie udało się uzyskać wyceny. Spróbuj ponownie lub sprecyzuj nazwę.',
+        );
+        setStep('input');
+        return;
+      }
+
       setValuation(data);
       setCategory(data.suggestedCategory);
       setStep('confirm');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Błąd wyceny. Spróbuj ponownie.');
+      console.error('[add-asset] valuate fetch error:', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Błąd połączenia z serwerem. Sprawdź internet i spróbuj ponownie.',
+      );
       setStep('input');
     }
   };
@@ -108,29 +134,40 @@ export default function AddAssetPage() {
       setError('Brak wyceny do zatwierdzenia.');
       return;
     }
+    if (step === 'saving') return; // prevent double-click
+
     setError('');
     setStep('saving');
 
-    const res = await fetch('/api/assets', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.trim(),
-        category,
-        value: valuation.estimatedValue,
-        quantity: parseFloat(quantity),
-        reasoning: valuation.reasoning,
-      }),
-    });
+    try {
+      const res = await fetch('/api/assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          category,
+          value: valuation.estimatedValue,
+          quantity: parseFloat(quantity),
+          reasoning: valuation.reasoning,
+        }),
+      });
 
-    if (!res.ok) {
-      const d = await res.json();
-      setError(d.error ?? 'Błąd zapisu.');
+      const d = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = (d as { error?: string }).error ?? `Błąd zapisu (HTTP ${res.status}).`;
+        console.error('[add-asset] save error:', msg);
+        setError(msg);
+        setStep('confirm');
+        return;
+      }
+
+      setStep('saved');
+    } catch (err) {
+      console.error('[add-asset] save fetch error:', err);
+      setError('Błąd połączenia z bazą danych. Spróbuj ponownie.');
       setStep('confirm');
-      return;
     }
-
-    setStep('saved');
   };
 
   const handleReset = () => {
@@ -225,20 +262,26 @@ export default function AddAssetPage() {
               <button
                 type="submit"
                 disabled={step === 'valuating' || !name.trim()}
-                className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold rounded-xl transition-colors shadow-md shadow-indigo-200"
+                className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-indigo-200"
               >
                 {step === 'valuating' ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Wyceniam przez AI…
+                    <span>Trwa wycenianie przez AI…</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    Wycena AI
+                    <span>Wycena AI</span>
                   </>
                 )}
               </button>
+
+              {step === 'valuating' && (
+                <p className="text-center text-xs text-gray-400 animate-pulse">
+                  Pobieranie aktualnych kursów rynkowych, może potrwać kilka sekund…
+                </p>
+              )}
             </form>
 
             {/* Quick-fill examples */}
