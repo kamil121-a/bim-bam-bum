@@ -191,7 +191,71 @@ async function fetchCryptoPln(coingeckoId: string, signal: AbortSignal): Promise
   }
 }
 
-// ─── API 5: Twelve Data (USD per share, requires TWELVE_DATA_API_KEY) ────────
+// ─── API 5a: Stooq.pl (PLN per share, Polish GPW – always free, no key) ───────
+//
+// URL format: https://stooq.pl/q/l/?s={symbol}&f=sd2t2ohlcv&e=csv
+// Response (CSV with header):
+//   Symbol,Date,Time,Open,High,Low,Close,Volume
+//   PKN,2026-05-18,17:05:00,58.00,58.80,57.90,58.40,1562300
+// Close is at column index 6.
+// Invalid tickers return "N/D" in all price fields.
+
+async function fetchStooqPln(stooqSymbol: string, signal: AbortSignal): Promise<number | null> {
+  // stooqSymbol is already lowercase (e.g. "pkn", "pko", "ale")
+  const url = `https://stooq.pl/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcv&e=csv`;
+
+  try {
+    const res = await fetch(url, {
+      signal,
+      headers: {
+        // Mimic a browser to avoid bot-detection
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept':     'text/csv,text/plain,*/*',
+      },
+    });
+
+    if (!res.ok) {
+      console.warn(`[stooq] HTTP ${res.status} dla "${stooqSymbol}"`);
+      return null;
+    }
+
+    const text = await res.text();
+    console.log(`[stooq] "${stooqSymbol}" surowa odpowiedź:`, text.split('\n').slice(0, 2).join(' | '));
+
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) {
+      console.warn(`[stooq] Brak linii danych dla "${stooqSymbol}"`);
+      return null;
+    }
+
+    // Line 0 = header, Line 1 = data
+    const cols = lines[1].split(',');
+    // Col indices: 0=Symbol 1=Date 2=Time 3=Open 4=High 5=Low 6=Close 7=Volume
+    const closeStr = cols[6]?.trim() ?? '';
+
+    if (!closeStr || closeStr === 'N/D' || closeStr === '-') {
+      console.warn(`[stooq] Ticker "${stooqSymbol}" nie znaleziony (N/D)`);
+      return null;
+    }
+
+    const price = parseFloat(closeStr);
+    if (!isFinite(price) || price <= 0) {
+      console.warn(`[stooq] Nieprawidłowa cena dla "${stooqSymbol}": "${closeStr}"`);
+      return null;
+    }
+
+    console.log(`[stooq] Pobrana cena: ${stooqSymbol.toUpperCase()} = ${price} PLN`);
+    return price;
+
+  } catch (err) {
+    if (err instanceof Error && err.name !== 'AbortError') {
+      console.warn(`[stooq] Błąd dla "${stooqSymbol}":`, err.message);
+    }
+    return null;
+  }
+}
+
+// ─── API 5b: Twelve Data (USD per share – US & global stocks) ─────────────────
 
 async function fetchStockUsd(symbol: string, signal: AbortSignal): Promise<number | null> {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
@@ -609,8 +673,9 @@ function parseTicker(raw: string): ParsedTicker {
   const cgId = CRYPTO_TICKER_TO_CG[t];
   if (cgId) return { market: 'crypto', apiId: cgId, category: 'Krypto' };
 
-  if (t.endsWith('.PL')) return { market: 'gpw', apiId: `${t.slice(0, -3)}.WA`, category: 'Giełda' };
-  if (t.endsWith('.WA')) return { market: 'gpw', apiId: t,                        category: 'Giełda' };
+  // GPW: apiId is lowercase Stooq symbol (e.g. "pkn", "pko") – no suffix
+  if (t.endsWith('.PL')) return { market: 'gpw', apiId: t.slice(0, -3).toLowerCase(), category: 'Giełda' };
+  if (t.endsWith('.WA')) return { market: 'gpw', apiId: t.slice(0, -3).toLowerCase(), category: 'Giełda' };
 
   if (t.endsWith('.US')) return { market: 'us',  apiId: t.slice(0, -3),           category: 'Giełda' };
 
@@ -690,9 +755,11 @@ export async function estimateByTicker(
       }
 
       case 'crypto': {
+        console.log(`[valuate] Wykryto kryptowalutę: ${label} → CoinGecko id="${parsed.apiId}"`);
         const pln = await fetchCryptoPln(parsed.apiId, controller.signal);
-        if (!pln) throw new Error(`Nie znaleziono kryptowaluty: ${label}. Dostępne: BTC, ETH, SOL, XRP, ADA, DOGE…`);
+        if (!pln) throw new Error(`Nie znaleziono takiego tickera na giełdzie. Dostępne krypto: BTC, ETH, SOL, XRP, ADA, DOGE…`);
         const total = Math.round(pln * qty);
+        console.log('Wykryto ticker:', label, '| Pobrana cena końcowa w PLN:', Math.round(pln));
         return {
           estimatedValue:    total,
           unitPrice:         Math.round(pln),
@@ -706,35 +773,39 @@ export async function estimateByTicker(
       }
 
       case 'gpw': {
-        // Twelve Data returns GPW prices already in PLN
-        const pricePln = await fetchStockUsd(parsed.apiId, controller.signal);
+        // Stooq.pl – free, reliable, no API key needed; prices in PLN
+        console.log(`[valuate] Wykryto ticker GPW: ${label} → Stooq symbol="${parsed.apiId}"`);
+        const pricePln = await fetchStooqPln(parsed.apiId, controller.signal);
         if (!pricePln) throw new Error(
-          `Nie znaleziono tickera GPW: ${label}. Użyj formatu z końcówką .PL (np. PKN.PL, PKO.PL, ALE.PL).`,
+          `Nie znaleziono takiego tickera na giełdzie. Upewnij się, że ticker GPW jest poprawny (np. PKN.PL, PKO.PL, CDR.PL).`,
         );
-        const unitPrice = Math.round(pricePln);
-        const total     = Math.round(unitPrice * qty);
+        const unitPrice  = parseFloat(pricePln.toFixed(2));
+        const total      = Math.round(unitPrice * qty);
+        console.log('Wykryto ticker:', label, '| Pobrana cena końcowa w PLN:', unitPrice);
         return {
           estimatedValue:    total,
           unitPrice,
           currency:          'PLN',
           confidence:        'high',
-          source:            `Twelve Data (${parsed.apiId}, GPW)`,
+          source:            `Stooq.pl (${label}, GPW Warszawa)`,
           suggestedCategory: 'Finanse',
           aiCategory:        'Giełda',
-          reasoning:         `${label}: ${pricePln.toFixed(2)} PLN/szt. (GPW Warszawa)`,
+          reasoning:         `${label}: ${pricePln.toFixed(2)} PLN/szt. (GPW Warszawa, źródło: Stooq)`,
         };
       }
 
       case 'us': {
+        console.log(`[valuate] Wykryto ticker zagraniczny: ${label} → Twelve Data symbol="${parsed.apiId}"`);
         const [priceUsd, usdPln] = await Promise.all([
           fetchStockUsd(parsed.apiId, controller.signal),
           getUsdPln(controller.signal),
         ]);
         if (!priceUsd) throw new Error(
-          `Nie znaleziono tickera: ${label}. Użyj formatu z końcówką .US (np. AAPL.US, TSLA.US, MCD.US).`,
+          `Nie znaleziono takiego tickera na giełdzie. Sprawdź symbol (np. AAPL.US, TSLA.US, MCD.US).`,
         );
         const unitPrice = Math.round(priceUsd * usdPln);
         const total     = Math.round(unitPrice * qty);
+        console.log('Wykryto ticker:', label, '| Cena USD:', priceUsd, '| Kurs USD/PLN:', usdPln.toFixed(4), '| Pobrana cena końcowa w PLN:', unitPrice);
         return {
           estimatedValue:    total,
           unitPrice,
