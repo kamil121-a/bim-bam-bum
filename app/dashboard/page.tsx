@@ -8,16 +8,19 @@ import Navigation from '@/components/Navigation';
 import AssetCard, { formatPLN } from '@/components/AssetCard';
 import CategoryBadge from '@/components/CategoryBadge';
 import type { Asset, AssetCategory } from '@/types';
-import { PlusCircle, TrendingUp, Package, Layers, RefreshCw } from 'lucide-react';
+import {
+  PlusCircle, TrendingUp, Package, Layers,
+  RefreshCw, ArrowUpDown, ChevronDown, ChevronRight,
+  Sparkles,
+} from 'lucide-react';
 
 const CATEGORY_ORDER: AssetCategory[] = ['Finanse', 'Nieruchomości', 'Elektronika', 'Inne'];
 
-// Skeleton placeholder while assets are loading
 function AssetSkeleton() {
   return (
     <div className="space-y-2">
       {[1, 2, 3].map(i => (
-        <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />
+        <div key={i} className="h-16 bg-slate-800 rounded-xl animate-pulse border border-slate-700/50" />
       ))}
     </div>
   );
@@ -26,14 +29,24 @@ function AssetSkeleton() {
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [assets, setAssets] = useState<Asset[]>([]);
-  // Start true so the skeleton shows immediately instead of briefly flashing "Brak aktywów"
+
+  const [assets,       setAssets]       = useState<Asset[]>([]);
   const [fetchLoading, setFetchLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
-  // IDs of assets that were just refreshed — drives green checkmark in AssetCard
-  const [refreshedIds, setRefreshedIds] = useState<Set<string>>(new Set());
+  const [deletingId,   setDeletingId]   = useState<string | null>(null);
+
+  // Finance refresh
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [refreshMsg,    setRefreshMsg]    = useState<string | null>(null);
+  const [refreshedIds,  setRefreshedIds]  = useState<Set<string>>(new Set());
+
+  // Other-category refresh
+  const [refreshingOther, setRefreshingOther] = useState(false);
+
+  // Sort: 'value' = highest first, 'date' = newest first
+  const [sortBy, setSortBy] = useState<'value' | 'date'>('value');
+
+  // Collapsed categories
+  const [collapsed, setCollapsed] = useState<Set<AssetCategory>>(new Set());
 
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
@@ -61,9 +74,7 @@ export default function DashboardPage() {
   const handleDelete = async (id: string) => {
     setDeletingId(id);
     const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setAssets(prev => prev.filter(a => a.id !== id));
-    }
+    if (res.ok) setAssets(prev => prev.filter(a => a.id !== id));
     setDeletingId(null);
   };
 
@@ -75,61 +86,109 @@ export default function DashboardPage() {
         body:    JSON.stringify(changes),
       });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error((d as { error?: string }).error ?? `Błąd aktualizacji (HTTP ${res.status})`);
-      }
+      if (!res.ok) throw new Error((d as { error?: string }).error ?? `Błąd (HTTP ${res.status})`);
       const updated = (d as { asset: typeof assets[0] }).asset;
       setAssets(prev => prev.map(a => (a.id === id ? updated : a)));
     },
     [],
   );
 
+  // ── Finance refresh ───────────────────────────────────────────────────────────
   const handleRefresh = async () => {
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      const res = await fetch('/api/assets/refresh', { method: 'POST' });
+      const res  = await fetch('/api/assets/refresh', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setAssets(data.assets);
-        // Highlight successfully refreshed assets with green checkmarks
         if (data.updatedIds?.length) {
           setRefreshedIds(new Set(data.updatedIds));
           setTimeout(() => setRefreshedIds(new Set()), 4_500);
         }
         router.refresh();
-        const msg =
+        setRefreshMsg(
           data.failed > 0
-            ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się wycenić).`
-            : `Zaktualizowano ${data.updated} aktywów według aktualnych cen rynkowych.`;
-        setRefreshMsg(msg);
+            ? `Zaktualizowano ${data.updated} aktywów (${data.failed} nie udało się).`
+            : `Zaktualizowano ${data.updated} aktywów giełdowych.`,
+        );
         setTimeout(() => setRefreshMsg(null), 6000);
       } else {
         setRefreshMsg('Błąd odświeżania. Spróbuj ponownie.');
       }
     } catch {
-      setRefreshMsg('Błąd połączenia. Spróbuj ponownie.');
+      setRefreshMsg('Błąd połączenia.');
     } finally {
       setRefreshing(false);
     }
   };
 
+  // ── Other-category refresh ────────────────────────────────────────────────────
+  const handleRefreshOther = async () => {
+    setRefreshingOther(true);
+    setRefreshMsg(null);
+    try {
+      const res  = await fetch('/api/assets/refresh', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ type: 'other' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAssets(data.assets);
+        if (data.updatedIds?.length) {
+          setRefreshedIds(new Set(data.updatedIds));
+          setTimeout(() => setRefreshedIds(new Set()), 4_500);
+        }
+        router.refresh();
+        setRefreshMsg(
+          data.failed > 0
+            ? `Zaktualizowano ${data.updated} aktywów opisowych (${data.failed} nie udało się).`
+            : `Zaktualizowano ${data.updated} aktywów opisowych przez AI.`,
+        );
+        setTimeout(() => setRefreshMsg(null), 6000);
+      } else {
+        setRefreshMsg('Błąd odświeżania aktywów opisowych.');
+      }
+    } catch {
+      setRefreshMsg('Błąd połączenia.');
+    } finally {
+      setRefreshingOther(false);
+    }
+  };
+
+  // ── Toggle collapse ───────────────────────────────────────────────────────────
+  const toggleCollapse = (cat: AssetCategory) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  };
+
+  // ── Derived ───────────────────────────────────────────────────────────────────
   const totalValue = assets.reduce((sum, a) => sum + a.value, 0);
 
-  const byCategory = CATEGORY_ORDER.map(cat => ({
-    category: cat,
-    assets: assets.filter(a => a.category === cat),
-    total: assets.filter(a => a.category === cat).reduce((s, a) => s + a.value, 0),
-  })).filter(g => g.assets.length > 0);
+  const byCategory = CATEGORY_ORDER.map(cat => {
+    const catAssets = assets
+      .filter(a => a.category === cat)
+      .sort((a, b) =>
+        sortBy === 'value'
+          ? b.value - a.value
+          : new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      );
+    return { category: cat, assets: catAssets, total: catAssets.reduce((s, a) => s + a.value, 0) };
+  }).filter(g => g.assets.length > 0);
 
-  // Show full-page spinner only while auth is resolving (< 50 ms with fast-path getSession).
-  // If user is null after auth, return null briefly until the router.replace('/login') fires.
+  const hasFinance = assets.some(a => a.category === 'Finanse');
+  const hasOther   = assets.some(a => a.category !== 'Finanse');
+
   if (loading || !user) {
     return (
       <>
         <Navigation />
         <div className="min-h-screen flex items-center justify-center">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
         </div>
       </>
     );
@@ -140,141 +199,189 @@ export default function DashboardPage() {
       <Navigation />
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
 
-        {/* Welcome + refresh button */}
-        <div className="flex items-start justify-between mb-8 gap-4">
+        {/* ── Header ── */}
+        <div className="flex items-start justify-between mb-8 gap-4 flex-wrap">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">
-              Witaj, <span className="text-indigo-600">{user?.username}</span> 👋
+            <h2 className="text-2xl font-bold text-slate-100">
+              Witaj, <span className="text-indigo-400">{user.username}</span> 👋
             </h2>
-            <p className="text-gray-500 mt-1">Oto przegląd Twojego majątku</p>
+            <p className="text-slate-500 mt-1">Oto przegląd Twojego majątku</p>
           </div>
 
-          {!fetchLoading && assets.length > 0 && (
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              title="Ponownie wycenia wszystkie aktywa przez AI i aktualizuje ceny"
-              className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-sm font-medium hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors shadow-sm disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              {refreshing ? 'Odświeżam…' : 'Odśwież wartość majątku'}
-            </button>
+          {/* Refresh buttons */}
+          {!fetchLoading && (hasFinance || hasOther) && (
+            <div className="flex gap-2 flex-wrap">
+              {hasFinance && (
+                <button
+                  onClick={handleRefresh}
+                  disabled={refreshing || refreshingOther}
+                  title="Odśwież kursy giełdowe (Finanse)"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-700 hover:border-indigo-500/40 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                  {refreshing ? 'Odświeżam…' : 'Odśwież Finanse'}
+                </button>
+              )}
+              {hasOther && (
+                <button
+                  onClick={handleRefreshOther}
+                  disabled={refreshing || refreshingOther}
+                  title="Odśwież wyceny AI (Nieruchomości, Elektronika, Inne)"
+                  className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 border border-slate-700 text-slate-300 rounded-xl text-sm font-medium hover:bg-slate-700 hover:border-violet-500/40 hover:text-violet-300 transition-colors disabled:opacity-50"
+                >
+                  <Sparkles className={`w-4 h-4 ${refreshingOther ? 'animate-spin' : ''}`} />
+                  {refreshingOther ? 'Wyceniam AI…' : 'Odśwież inne AI'}
+                </button>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Refresh status message */}
+        {/* Status message */}
         {refreshMsg && (
-          <div className="mb-6 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+          <div className="mb-6 px-4 py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-sm text-emerald-300">
             {refreshMsg}
           </div>
         )}
 
-        {/* Summary cards */}
+        {/* ── Summary cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-          <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200">
+          <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-xl shadow-indigo-900/30">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
                 <TrendingUp className="w-5 h-5" />
               </div>
-              <span className="text-sm font-medium opacity-80">Łączny majątek</span>
+              <span className="text-sm font-medium text-indigo-200">Łączny majątek</span>
             </div>
             <p className="text-3xl font-bold">
-              {fetchLoading ? (
-                <span className="inline-block w-32 h-8 bg-white/20 rounded-lg animate-pulse" />
-              ) : (
-                formatPLN(totalValue)
-              )}
+              {fetchLoading
+                ? <span className="inline-block w-32 h-8 bg-white/20 rounded-lg animate-pulse" />
+                : formatPLN(totalValue)}
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700/60 shadow-sm">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-                <Package className="w-5 h-5 text-emerald-600" />
+              <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                <Package className="w-5 h-5 text-emerald-400" />
               </div>
-              <span className="text-sm font-medium text-gray-500">Liczba aktywów</span>
+              <span className="text-sm font-medium text-slate-400">Aktywów</span>
             </div>
-            <p className="text-3xl font-bold text-gray-900">
-              {fetchLoading ? (
-                <span className="inline-block w-10 h-8 bg-gray-100 rounded-lg animate-pulse" />
-              ) : (
-                assets.length
-              )}
+            <p className="text-3xl font-bold text-slate-100">
+              {fetchLoading ? <span className="inline-block w-10 h-8 bg-slate-700 rounded-lg animate-pulse" /> : assets.length}
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+          <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700/60 shadow-sm">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
-                <Layers className="w-5 h-5 text-amber-600" />
+              <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center">
+                <Layers className="w-5 h-5 text-amber-400" />
               </div>
-              <span className="text-sm font-medium text-gray-500">Kategorie</span>
+              <span className="text-sm font-medium text-slate-400">Kategorie</span>
             </div>
-            <p className="text-3xl font-bold text-gray-900">
-              {fetchLoading ? (
-                <span className="inline-block w-10 h-8 bg-gray-100 rounded-lg animate-pulse" />
-              ) : (
-                byCategory.length
-              )}
+            <p className="text-3xl font-bold text-slate-100">
+              {fetchLoading ? <span className="inline-block w-10 h-8 bg-slate-700 rounded-lg animate-pulse" /> : byCategory.length}
             </p>
           </div>
         </div>
 
-        {/* Assets list — skeleton while loading, then real content */}
+        {/* ── Assets ── */}
         {fetchLoading ? (
           <AssetSkeleton />
         ) : assets.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-200">
+          <div className="text-center py-20 bg-slate-800 rounded-2xl border border-dashed border-slate-700">
             <div className="text-5xl mb-4">💼</div>
-            <h3 className="text-xl font-semibold text-gray-700 mb-2">Brak aktywów</h3>
-            <p className="text-gray-400 mb-6">Zacznij śledzić swój majątek – dodaj pierwszy element.</p>
+            <h3 className="text-xl font-semibold text-slate-200 mb-2">Brak aktywów</h3>
+            <p className="text-slate-500 mb-6">Zacznij śledzić majątek – dodaj pierwszy element.</p>
             <Link
               href="/add-asset"
-              className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/40"
             >
               <PlusCircle className="w-4 h-4" />
               Dodaj pierwsze aktywo
             </Link>
           </div>
         ) : (
-          <div className="space-y-8">
-            {byCategory.map(({ category, assets: catAssets, total }) => (
-              <section key={category}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <CategoryBadge category={category} />
-                    <span className="text-sm text-gray-400">({catAssets.length})</span>
-                  </div>
-                  <span className="text-sm font-semibold text-gray-700">{formatPLN(total)}</span>
-                </div>
-                <div className="space-y-2">
-                  {catAssets.map(asset => (
-                    <AssetCard
-                      key={asset.id}
-                      asset={asset}
-                      onDelete={handleDelete}
-                      onEdit={handleEdit}
-                      deleting={deletingId === asset.id}
-                      refreshed={refreshedIds.has(asset.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+          <div className="space-y-6">
 
-            <div className="flex items-center justify-between pt-2">
+            {/* Sort toggle */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500 uppercase tracking-wide font-medium">Sortuj w kategorii</span>
               <button
-                onClick={handleRefresh}
-                disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+                onClick={() => setSortBy(s => s === 'value' ? 'date' : 'value')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 border border-slate-700 text-slate-400 rounded-lg text-xs font-medium hover:bg-slate-700 hover:text-slate-200 transition-colors"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                {refreshing ? 'Odświeżam ceny…' : 'Odśwież wyceny AI'}
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                {sortBy === 'value' ? 'Wartość ↓' : 'Data dodania ↓'}
               </button>
+            </div>
+
+            {byCategory.map(({ category, assets: catAssets, total }) => {
+              const isCollapsed = collapsed.has(category);
+              return (
+                <section key={category}>
+                  {/* Category header — clickable to collapse */}
+                  <button
+                    onClick={() => toggleCollapse(category)}
+                    className="w-full flex items-center justify-between mb-3 group"
+                  >
+                    <div className="flex items-center gap-2">
+                      {isCollapsed
+                        ? <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                        : <ChevronDown  className="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                      }
+                      <CategoryBadge category={category} />
+                      <span className="text-sm text-slate-500">({catAssets.length})</span>
+                    </div>
+                    <span className="text-sm font-semibold text-slate-300">{formatPLN(total)}</span>
+                  </button>
+
+                  {/* Asset list — hidden when collapsed */}
+                  {!isCollapsed && (
+                    <div className="space-y-2">
+                      {catAssets.map(asset => (
+                        <AssetCard
+                          key={asset.id}
+                          asset={asset}
+                          onDelete={handleDelete}
+                          onEdit={handleEdit}
+                          deleting={deletingId === asset.id}
+                          refreshed={refreshedIds.has(asset.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <div className="flex gap-2">
+                {hasFinance && (
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing || refreshingOther}
+                    className="flex items-center gap-2 px-3 py-2 border border-slate-700 text-slate-500 rounded-xl text-xs hover:bg-slate-800 hover:text-slate-300 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                    {refreshing ? 'Odświeżam…' : 'Odśwież Finanse'}
+                  </button>
+                )}
+                {hasOther && (
+                  <button
+                    onClick={handleRefreshOther}
+                    disabled={refreshing || refreshingOther}
+                    className="flex items-center gap-2 px-3 py-2 border border-slate-700 text-slate-500 rounded-xl text-xs hover:bg-slate-800 hover:text-violet-300 transition-colors disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${refreshingOther ? 'animate-spin' : ''}`} />
+                    {refreshingOther ? 'Wyceniam…' : 'Odśwież AI'}
+                  </button>
+                )}
+              </div>
 
               <Link
                 href="/add-asset"
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/30"
               >
                 <PlusCircle className="w-4 h-4" />
                 Dodaj kolejne

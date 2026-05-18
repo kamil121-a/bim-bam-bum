@@ -1,17 +1,17 @@
 import type { AssetCategory } from '@/types';
 
 const CATEGORY_STYLES: Record<AssetCategory, string> = {
-  Elektronika: 'bg-blue-100 text-blue-700',
-  Finanse: 'bg-emerald-100 text-emerald-700',
-  Nieruchomości: 'bg-amber-100 text-amber-700',
-  Inne: 'bg-gray-100 text-gray-600',
+  Elektronika:   'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  Finanse:       'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+  Nieruchomości: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
+  Inne:          'bg-slate-600/50 text-slate-300 border border-slate-500/30',
 };
 
 const CATEGORY_ICONS: Record<AssetCategory, string> = {
-  Elektronika: '💻',
-  Finanse: '📈',
+  Elektronika:   '💻',
+  Finanse:       '📈',
   Nieruchomości: '🏠',
-  Inne: '📦',
+  Inne:          '📦',
 };
 
 export default function CategoryBadge({ category }: { category: AssetCategory }) {

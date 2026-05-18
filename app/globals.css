@@ -5,8 +5,8 @@ html {
 }
 
 body {
-  background-color: #f8fafc;
-  color: #111827;
+  background-color: #0f172a;   /* slate-900 */
+  color: #e2e8f0;              /* slate-200 */
 }
 
 /* Custom scrollbar */
@@ -14,12 +14,12 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: #1e293b;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #475569;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #64748b;
 }

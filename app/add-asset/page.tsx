@@ -74,20 +74,11 @@ const DESC_EXAMPLES = [
   'iPhone 15 Pro 256GB, kolor tytanowy, używany 6 miesięcy, stan idealny, oryginalne opakowanie',
 ];
 
-// Currencies supported by NBP table A (rate per 1 unit)
 const CASH_CURRENCIES: Array<{ code: string; name: string; flag: string }> = [
-  { code: 'PLN', name: 'Złoty',         flag: '🇵🇱' },
-  { code: 'USD', name: 'Dolar USA',     flag: '🇺🇸' },
-  { code: 'EUR', name: 'Euro',          flag: '🇪🇺' },
-  { code: 'GBP', name: 'Funt',         flag: '🇬🇧' },
-  { code: 'CHF', name: 'Frank szw.',    flag: '🇨🇭' },
-  { code: 'JPY', name: 'Jen',           flag: '🇯🇵' },
-  { code: 'CAD', name: 'Dolar kanad.',  flag: '🇨🇦' },
-  { code: 'AUD', name: 'Dolar austr.',  flag: '🇦🇺' },
-  { code: 'NOK', name: 'Korona norw.',  flag: '🇳🇴' },
-  { code: 'SEK', name: 'Korona szwedz.',flag: '🇸🇪' },
-  { code: 'CZK', name: 'Korona czes.',  flag: '🇨🇿' },
-  { code: 'HUF', name: 'Forint',        flag: '🇭🇺' },
+  { code: 'PLN', name: 'Złoty polski', flag: '🇵🇱' },
+  { code: 'USD', name: 'Dolar USA',    flag: '🇺🇸' },
+  { code: 'EUR', name: 'Euro',         flag: '🇪🇺' },
+  { code: 'DKK', name: 'Korona duń.',  flag: '🇩🇰' },
 ];
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -114,7 +105,7 @@ export default function AddAssetPage() {
   const [description, setDescription] = useState('');
 
   // Cash-mode state
-  const [cashCurrency, setCashCurrency] = useState('USD');
+  const [cashCurrency, setCashCurrency] = useState('PLN');
   const [cashAmount,   setCashAmount]   = useState('');
 
   useEffect(() => {
@@ -366,8 +357,8 @@ export default function AddAssetPage() {
       <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
 
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Dodaj nowe aktywo</h2>
-          <p className="text-gray-500 mt-1">Wybierz sposób wyceny odpowiedni dla swojego aktywa.</p>
+          <h2 className="text-2xl font-bold text-slate-100">Dodaj nowe aktywo</h2>
+          <p className="text-slate-500 mt-1">Wybierz sposób wyceny odpowiedni dla swojego aktywa.</p>
         </div>
 
         {/* ── Mode tabs (only on input / valuating) ── */}
@@ -414,28 +405,26 @@ export default function AddAssetPage() {
 
         {/* ── Step: Input / Valuating ── */}
         {(step === 'input' || step === 'valuating') && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+          <div className="bg-slate-800 rounded-2xl border border-slate-700/60 shadow-xl p-8">
 
             {/* ── OPTION A: Ticker / Market (no AI) ── */}
             {mode === 'market' && (
               <form onSubmit={handleValuateMarket} className="space-y-5">
-                <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 space-y-1">
-                  <p className="font-medium text-indigo-700">Format tickerów:</p>
-                  <p>Akcje US: <code className="bg-indigo-100 px-1 rounded text-xs">AAPL.US</code> &nbsp; GPW: <code className="bg-indigo-100 px-1 rounded text-xs">PKN.PL</code> &nbsp; Krypto: <code className="bg-indigo-100 px-1 rounded text-xs">BTC</code> &nbsp; Metale: <code className="bg-indigo-100 px-1 rounded text-xs">GOLD</code> <code className="bg-indigo-100 px-1 rounded text-xs">SILVER</code></p>
+                <div className="text-sm text-slate-400 bg-indigo-500/10 border border-indigo-500/20 rounded-xl px-4 py-3 space-y-1">
+                  <p className="font-medium text-indigo-300">Format tickerów:</p>
+                  <p>Akcje US: <code className="bg-indigo-500/20 px-1 rounded text-xs text-indigo-300">AAPL.US</code> &nbsp; GPW: <code className="bg-indigo-500/20 px-1 rounded text-xs text-indigo-300">PKN.PL</code> &nbsp; Krypto: <code className="bg-indigo-500/20 px-1 rounded text-xs text-indigo-300">BTC</code> &nbsp; Metale: <code className="bg-indigo-500/20 px-1 rounded text-xs text-indigo-300">GOLD</code></p>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Ticker / Symbol
-                  </label>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Ticker / Symbol</label>
                   <div className="relative">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
                     <input
                       type="text"
                       value={ticker}
                       onChange={e => setTicker(e.target.value.toUpperCase())}
                       placeholder='np. AAPL.US, PKN.PL, BTC, GOLD'
-                      className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400 font-mono tracking-wide"
+                      className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition font-mono tracking-wide"
                       disabled={step === 'valuating'}
                       autoFocus
                       autoCapitalize="characters"
@@ -445,11 +434,9 @@ export default function AddAssetPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Ilość / liczba jednostek
-                  </label>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Ilość / liczba jednostek</label>
                   <div className="relative">
-                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
                     <input
                       type="number"
                       min="0.0001"
@@ -457,49 +444,35 @@ export default function AddAssetPage() {
                       value={quantity}
                       onChange={e => setQuantity(e.target.value)}
                       placeholder="np. 1, 2.5, 0.5"
-                      className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
+                      className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
                       disabled={step === 'valuating'}
                     />
                   </div>
-                  <p className="text-xs text-gray-400 mt-1.5">
-                    Akcje / crypto: liczba sztuk. Złoto: gramy. Pozostałe metale: uncje trojańskie (oz). Gotówka: kwota PLN.
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1.5">Akcje / crypto: sztuki. Złoto: gramy. Metale: uncje (oz).</p>
                 </div>
 
                 {error && (
-                  <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
-                    {error}
-                  </div>
+                  <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400 font-medium">{error}</div>
                 )}
 
                 <button
                   type="submit"
                   disabled={step === 'valuating' || !ticker.trim()}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-indigo-200"
+                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-lg shadow-indigo-900/30"
                 >
                   {step === 'valuating' ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Pobieram kurs…</span>
-                    </>
+                    <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>Pobieram kurs…</span></>
                   ) : (
-                    <>
-                      <TrendingUp className="w-4 h-4" />
-                      <span>Pobierz kurs rynkowy</span>
-                    </>
+                    <><TrendingUp className="w-4 h-4" /><span>Pobierz kurs rynkowy</span></>
                   )}
                 </button>
 
                 {step === 'valuating' && (
-                  <p className="text-center text-xs text-gray-400 animate-pulse">
-                    Pobieranie aktualnego kursu z giełdy / CoinGecko / NBP…
-                  </p>
+                  <p className="text-center text-xs text-slate-500 animate-pulse">Pobieranie kursu…</p>
                 )}
 
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-xs font-medium text-gray-400 mb-3 uppercase tracking-wide">
-                    Szybki wybór
-                  </p>
+                <div className="pt-4 border-t border-slate-700">
+                  <p className="text-xs font-medium text-slate-500 mb-3 uppercase tracking-wide">Szybki wybór</p>
                   <div className="flex flex-wrap gap-2">
                     {MARKET_EXAMPLES.map(ex => (
                       <button
@@ -507,10 +480,10 @@ export default function AddAssetPage() {
                         type="button"
                         onClick={() => { setTicker(ex.ticker); setQuantity(ex.qty); }}
                         disabled={step === 'valuating'}
-                        className="px-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors disabled:opacity-50"
+                        className="px-3 py-1.5 text-xs bg-slate-700 border border-slate-600 rounded-lg text-slate-400 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-300 transition-colors disabled:opacity-50"
                       >
                         <span className="font-mono">{ex.ticker}</span>
-                        <span className="text-gray-400 ml-1">({ex.label})</span>
+                        <span className="text-slate-600 ml-1">({ex.label})</span>
                       </button>
                     ))}
                   </div>
@@ -521,14 +494,14 @@ export default function AddAssetPage() {
             {/* ── OPTION C: Cash / Currency ── */}
             {mode === 'cash' && (
               <form onSubmit={handleValuateCash} className="space-y-5">
-                <div className="text-sm text-gray-500 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
-                  Wybierz walutę i wpisz kwotę. Kurs przeliczeniowy pochodzi z <strong className="text-emerald-700">oficjalnej tabeli NBP</strong> (Narodowy Bank Polski).
+                <div className="text-sm text-slate-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+                  Wybierz walutę i wpisz kwotę. Kurs przeliczeniowy pochodzi z <strong className="text-emerald-300">oficjalnej tabeli NBP</strong> (Narodowy Bank Polski).
                 </div>
 
                 {/* Currency grid */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Waluta</label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-4 gap-3">
                     {CASH_CURRENCIES.map(c => (
                       <button
                         key={c.code}
@@ -612,66 +585,49 @@ export default function AddAssetPage() {
             {/* ── OPTION B: Description ── */}
             {mode === 'description' && (
               <form onSubmit={handleValuateDescription} className="space-y-5">
-                <div className="text-sm text-gray-500 bg-violet-50 border border-violet-100 rounded-xl px-4 py-3">
-                  Opisz szczegółowo swój przedmiot, nieruchomość lub kolekcję.
-                  AI oszacuje wartość rynkową na podstawie Twojego opisu (2026).
+                <div className="text-sm text-slate-400 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-3">
+                  Opisz szczegółowo swój przedmiot, nieruchomość lub kolekcję. AI oszacuje wartość rynkową na podstawie Twojego opisu (2026).
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-2">
                     Opis aktywa
-                    <span className="ml-2 text-xs font-normal text-gray-400">
-                      im więcej szczegółów, tym dokładniejsza wycena
-                    </span>
+                    <span className="ml-2 text-xs font-normal text-slate-500">im więcej szczegółów, tym dokładniejsza wycena</span>
                   </label>
                   <textarea
                     value={description}
                     onChange={e => setDescription(e.target.value)}
-                    placeholder={`np. "Stara moneta 2 złote z 1995 roku, stan menniczy, w oryginalnym etui kolekcjonerskim"\nalbo "Mieszkanie w centrum Krakowa, 45m2, 4 piętro, wysoki standard, balkon, garaż w cenie"`}
+                    placeholder={`np. "Stara moneta 2 złote z 1995 roku, stan menniczy"\nalbo "Mieszkanie w centrum Krakowa, 45m2, wysoki standard"`}
                     rows={5}
-                    className="w-full px-4 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-gray-900 placeholder-gray-400 resize-none"
+                    className="w-full px-4 py-3.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition resize-none"
                     disabled={step === 'valuating'}
                     autoFocus
                   />
-                  <p className="text-xs text-gray-400 mt-1.5">
-                    Ilość jest automatycznie ustawiana na <strong>1</strong> dla tej opcji.
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1.5">Ilość automatycznie = 1.</p>
                 </div>
 
                 {error && (
-                  <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600">
-                    {error}
-                  </div>
+                  <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400">{error}</div>
                 )}
 
                 <button
                   type="submit"
                   disabled={step === 'valuating' || description.trim().length < 10}
-                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-violet-200"
+                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-lg shadow-violet-900/30"
                 >
                   {step === 'valuating' ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>AI wycenia…</span>
-                    </>
+                    <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>AI wycenia…</span></>
                   ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      <span>Wycena przez AI</span>
-                    </>
+                    <><Sparkles className="w-4 h-4" /><span>Wycena przez AI</span></>
                   )}
                 </button>
 
                 {step === 'valuating' && (
-                  <p className="text-center text-xs text-gray-400 animate-pulse">
-                    AI analizuje opis i szacuje wartość rynkową w Polsce (2026)…
-                  </p>
+                  <p className="text-center text-xs text-slate-500 animate-pulse">AI analizuje opis i szacuje wartość rynkową w Polsce (2026)…</p>
                 )}
 
-                <div className="pt-4 border-t border-gray-100">
-                  <p className="text-xs font-medium text-gray-400 mb-3 uppercase tracking-wide">
-                    Przykłady opisów
-                  </p>
+                <div className="pt-4 border-t border-slate-700">
+                  <p className="text-xs font-medium text-slate-500 mb-3 uppercase tracking-wide">Przykłady</p>
                   <div className="space-y-2">
                     {DESC_EXAMPLES.map((ex, i) => (
                       <button
@@ -679,7 +635,7 @@ export default function AddAssetPage() {
                         type="button"
                         onClick={() => setDescription(ex)}
                         disabled={step === 'valuating'}
-                        className="w-full text-left px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-lg text-gray-600 hover:bg-violet-50 hover:border-violet-200 hover:text-violet-700 transition-colors disabled:opacity-50 truncate"
+                        className="w-full text-left px-3 py-2 text-xs bg-slate-700 border border-slate-600 rounded-lg text-slate-400 hover:bg-violet-500/10 hover:border-violet-500/30 hover:text-violet-300 transition-colors disabled:opacity-50 truncate"
                       >
                         {ex}
                       </button>
@@ -694,13 +650,13 @@ export default function AddAssetPage() {
         {/* ── Step: Confirm / Saving ── */}
         {(step === 'confirm' || step === 'saving') && valuation && (
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-slate-800 rounded-2xl border border-slate-700/60 shadow-xl overflow-hidden">
 
               {/* Value header */}
-              <div className={`px-8 py-6 border-b border-gray-100 bg-gradient-to-br ${
-                mode === 'description' ? 'from-violet-50 to-purple-50'  :
-                mode === 'cash'        ? 'from-emerald-50 to-teal-50'   :
-                                         'from-indigo-50 to-blue-50'
+              <div className={`px-8 py-6 border-b border-slate-700 bg-gradient-to-br ${
+                mode === 'description' ? 'from-violet-900/30 to-purple-900/20'   :
+                mode === 'cash'        ? 'from-emerald-900/30 to-teal-900/20'    :
+                                         'from-indigo-900/30 to-blue-900/20'
               }`}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -712,17 +668,17 @@ export default function AddAssetPage() {
 
                     {isManual ? (
                       <>
-                        <p className="text-sm text-gray-500 mb-1 flex items-center gap-1.5">
+                        <p className="text-sm text-slate-400 mb-1 flex items-center gap-1.5">
                           <PenLine className="w-3.5 h-3.5" />
                           Wprowadź wartość ręcznie
                         </p>
-                        <p className="text-3xl font-bold text-violet-700">
+                        <p className="text-3xl font-bold text-violet-400">
                           {finalValue > 0 ? formatPLN(finalValue) : '— PLN'}
                         </p>
                       </>
                     ) : (
                       <>
-                        <p className="text-sm text-gray-500 mb-1">
+                        <p className="text-sm text-slate-400 mb-1">
                           {mode === 'description'
                             ? 'Wycena AI (wartość rynkowa)'
                             : mode === 'cash'
@@ -745,49 +701,48 @@ export default function AddAssetPage() {
                     {CONFIDENCE_LABEL[valuation.confidence]}
                   </span>
                 </div>
-                <p className="text-sm text-gray-500 mt-3 italic">{valuation.reasoning}</p>
-                <p className="text-xs text-gray-400 mt-1">Źródło: {valuation.source}</p>
+                <p className="text-sm text-slate-400 mt-3 italic">{valuation.reasoning}</p>
+                <p className="text-xs text-slate-500 mt-1">Źródło: {valuation.source}</p>
               </div>
 
               <div className="px-8 py-6 space-y-5">
 
                 {/* Asset summary */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Aktywo</label>
-                  <p className="px-4 py-3 bg-gray-50 rounded-xl text-gray-900 font-medium text-sm line-clamp-2">
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Aktywo</label>
+                  <p className="px-4 py-3 bg-slate-700 rounded-xl text-slate-100 font-medium text-sm line-clamp-2">
                     {mode === 'market' && displayQty !== 1 ? `${displayQty} × ` : ''}{displayName}
                   </p>
                 </div>
 
                 {/* Category */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">
                     Kategoria
-                    <span className="ml-2 text-xs font-normal text-gray-400">(możesz zmienić)</span>
+                    <span className="ml-2 text-xs font-normal text-slate-500">(możesz zmienić)</span>
                   </label>
                   <div className="relative">
                     <select
                       value={category}
                       onChange={e => setCategory(e.target.value as AssetCategory)}
-                      className="w-full appearance-none px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition text-gray-900 bg-white pr-10"
+                      className="w-full appearance-none px-4 py-3 rounded-xl bg-slate-700 border border-slate-600 text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition pr-10"
                     >
                       {ASSET_CATEGORIES.map(cat => (
                         <option key={cat} value={cat}>{cat}</option>
                       ))}
                     </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
                   </div>
                   <div className="mt-2">
                     <CategoryBadge category={category} />
                   </div>
                 </div>
 
-                {/* Value field – LOCKED for market/AI estimate, EDITABLE for manual */}
+                {/* Value field */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  <label className="block text-sm font-medium text-slate-300 mb-1.5">
                     {isManual ? 'Twoja wycena (PLN)' : 'Wycena końcowa'}
                   </label>
-
                   {isManual ? (
                     <>
                       <input
@@ -797,13 +752,12 @@ export default function AddAssetPage() {
                         value={manualValue}
                         onChange={e => setManualValue(e.target.value)}
                         placeholder="Wpisz szacowaną wartość w PLN (np. 3500)"
-                        className="w-full px-4 py-3 rounded-xl border border-violet-200 bg-violet-50 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition text-gray-900 placeholder-gray-400"
+                        className="w-full px-4 py-3 rounded-xl bg-violet-900/30 border border-violet-500/30 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
                         disabled={step === 'saving'}
                         autoFocus
                       />
-                      <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
-                        <PenLine className="w-3 h-3" />
-                        Sprawdź aktualne ceny np. na Allegro / OLX.
+                      <p className="text-xs text-slate-500 mt-1.5 flex items-center gap-1">
+                        <PenLine className="w-3 h-3" />Sprawdź ceny np. na Allegro / OLX.
                       </p>
                     </>
                   ) : (
@@ -813,26 +767,22 @@ export default function AddAssetPage() {
                           type="text"
                           readOnly
                           value={formatPLN(valuation.estimatedValue)}
-                          className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed select-none"
+                          className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-slate-400 cursor-not-allowed select-none"
                         />
-                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
                       </div>
-                      <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                      <p className="text-xs text-slate-500 mt-1.5 flex items-center gap-1">
                         <Lock className="w-3 h-3" />
-                        {mode === 'market'
-                          ? 'Kwota pochodzi z giełdy – nie można jej zmienić ręcznie.'
-                          : mode === 'cash'
-                            ? 'Wartość przeliczona z oficjalnego kursu NBP – nie można zmienić ręcznie.'
-                            : 'Wycena AI – możesz kliknąć "Od nowa" i wpisać inny opis, by uzyskać inną wycenę.'}
+                        {mode === 'market' ? 'Kwota z giełdy – nie można zmienić.' :
+                         mode === 'cash'   ? 'Przeliczone z kursu NBP – nie można zmienić.' :
+                                             'Wycena AI – kliknij "Od nowa" aby zmienić opis.'}
                       </p>
                     </>
                   )}
                 </div>
 
                 {error && (
-                  <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600">
-                    {error}
-                  </div>
+                  <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400">{error}</div>
                 )}
               </div>
             </div>
@@ -842,10 +792,9 @@ export default function AddAssetPage() {
               <button
                 onClick={handleReset}
                 disabled={step === 'saving'}
-                className="flex items-center gap-2 px-5 py-3 border border-gray-200 text-gray-600 rounded-xl font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-5 py-3 border border-slate-700 text-slate-400 rounded-xl font-medium hover:bg-slate-800 transition-colors disabled:opacity-50"
               >
-                <RotateCcw className="w-4 h-4" />
-                Od nowa
+                <RotateCcw className="w-4 h-4" />Od nowa
               </button>
               <button
                 onClick={handleConfirm}
@@ -854,18 +803,12 @@ export default function AddAssetPage() {
                   (isManual  && (parseFloat(manualValue) || 0) <= 0) ||
                   (!isManual && valuation.estimatedValue <= 0)
                 }
-                className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-emerald-200"
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-lg shadow-emerald-900/30"
               >
                 {step === 'saving' ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Zapisuję…
-                  </>
+                  <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />Zapisuję…</>
                 ) : (
-                  <>
-                    <CheckCircle className="w-5 h-5" />
-                    Potwierdź i dodaj do majątku
-                  </>
+                  <><CheckCircle className="w-5 h-5" />Potwierdź i dodaj do majątku</>
                 )}
               </button>
             </div>
@@ -874,29 +817,29 @@ export default function AddAssetPage() {
 
         {/* ── Step: Saved ── */}
         {step === 'saved' && valuation && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <CheckCircle className="w-10 h-10 text-emerald-600" />
+          <div className="bg-slate-800 rounded-2xl border border-slate-700/60 shadow-xl p-12 text-center">
+            <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald-500/20">
+              <CheckCircle className="w-10 h-10 text-emerald-400" />
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">Dodano!</h3>
-            <p className="text-gray-500 mb-1 text-sm max-w-sm mx-auto line-clamp-2">
+            <h3 className="text-2xl font-bold text-slate-100 mb-2">Dodano!</h3>
+            <p className="text-slate-500 mb-1 text-sm max-w-sm mx-auto line-clamp-2">
               {mode === 'market' && displayQty !== 1 ? `${displayQty} × ` : ''}
-              <strong className="text-gray-800">{displayName}</strong>
+              <strong className="text-slate-200">{displayName}</strong>
             </p>
-            <p className="text-3xl font-bold text-indigo-700 my-3">
+            <p className="text-3xl font-bold text-indigo-400 my-3">
               {formatPLN(finalValue)}
             </p>
-            <p className="text-sm text-gray-400 mb-8">dodane do Twojego majątku</p>
+            <p className="text-sm text-slate-500 mb-8">dodane do Twojego majątku</p>
             <div className="flex gap-3 justify-center">
               <button
                 onClick={handleReset}
-                className="px-6 py-2.5 border border-gray-200 text-gray-600 rounded-xl font-medium hover:bg-gray-50 transition-colors"
+                className="px-6 py-2.5 border border-slate-700 text-slate-400 rounded-xl font-medium hover:bg-slate-700 transition-colors"
               >
                 Dodaj kolejne
               </button>
               <button
                 onClick={() => router.push('/dashboard')}
-                className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200"
+                className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/30"
               >
                 Przejdź do panelu
               </button>

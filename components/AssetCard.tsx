@@ -88,17 +88,17 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
 
   if (editing) {
     return (
-      <div className="p-4 bg-white rounded-xl border-2 border-indigo-200 shadow-md">
+      <div className="p-4 bg-slate-800 rounded-xl border-2 border-indigo-500/40 shadow-lg shadow-black/20">
         <div className="space-y-3">
 
           {/* Name field */}
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Nazwa aktywa</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Nazwa aktywa</label>
             <input
               type="text"
               value={editName}
               onChange={e => setEditName(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+              className="w-full px-3 py-2 text-sm rounded-lg bg-slate-700 border border-slate-600 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
               autoFocus
               disabled={saving}
             />
@@ -106,7 +106,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
 
           {/* Quantity field */}
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Ilość</label>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Ilość</label>
             <div className="flex items-center gap-3">
               <input
                 type="number"
@@ -114,13 +114,13 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
                 step="any"
                 value={editQty}
                 onChange={e => setEditQty(e.target.value)}
-                className="w-36 px-3 py-2 text-sm rounded-lg border border-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                className="w-36 px-3 py-2 text-sm rounded-lg bg-slate-700 border border-slate-600 text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
                 disabled={saving}
               />
               {previewValue > 0 && (
-                <span className="text-sm text-gray-500">
-                  → <strong className="text-indigo-700">{formatPLN(previewValue)}</strong>
-                  <span className="text-xs text-gray-400 ml-1">
+                <span className="text-sm text-slate-400">
+                  → <strong className="text-indigo-400">{formatPLN(previewValue)}</strong>
+                  <span className="text-xs text-slate-500 ml-1">
                     ({formatPLN(Math.round(unitPrice))}/szt.)
                   </span>
                 </span>
@@ -129,7 +129,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
           </div>
 
           {editError && (
-            <p className="text-xs text-red-500 bg-red-50 px-3 py-1.5 rounded-lg">{editError}</p>
+            <p className="text-xs text-red-400 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20">{editError}</p>
           )}
 
           {/* Actions */}
@@ -137,7 +137,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
             >
               {saving ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -149,7 +149,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
             <button
               onClick={handleCancel}
               disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-1.5 border border-slate-600 text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
               <X className="w-3.5 h-3.5" />
               Anuluj
@@ -163,35 +163,37 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
   // ── View mode ───────────────────────────────────────────────────────────────
 
   return (
-    <div className={`flex items-center justify-between p-4 bg-white rounded-xl border shadow-sm hover:shadow-md transition-all ${showCheck ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-100'}`}>
+    <div className={`flex items-center justify-between p-4 rounded-xl border transition-all ${
+      showCheck
+        ? 'bg-emerald-900/20 border-emerald-500/30'
+        : 'bg-slate-800 border-slate-700/60 hover:border-slate-600'
+    }`}>
 
       {/* Left: name + meta */}
       <div className="flex flex-col gap-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           {qtyLabel && (
-            <span className="text-xs font-semibold text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-md shrink-0">
+            <span className="text-xs font-semibold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md shrink-0 border border-indigo-500/20">
               {qtyLabel}
             </span>
           )}
-          <p className="font-semibold text-gray-900 truncate">{asset.name}</p>
+          <p className="font-semibold text-slate-100 truncate">{asset.name}</p>
 
-          {/* Original-name tooltip – only shown when user renamed the asset */}
+          {/* Original-name tooltip */}
           {showOriginalName && (
             <div className="relative group">
               <button
-                className="text-gray-300 hover:text-indigo-400 transition-colors"
+                className="text-slate-600 hover:text-indigo-400 transition-colors"
                 title={`Pierwotna nazwa: ${asset.original_name}`}
                 aria-label="Pokaż pierwotną nazwę"
               >
                 <Info className="w-3.5 h-3.5" />
               </button>
-              {/* Tooltip */}
-              <div className="pointer-events-none absolute left-0 bottom-6 z-20 hidden group-hover:block w-56 bg-gray-800 text-white text-xs rounded-xl px-3 py-2.5 shadow-lg">
-                <span className="text-gray-400">Pierwotna nazwa:</span>
+              <div className="pointer-events-none absolute left-0 bottom-6 z-20 hidden group-hover:block w-56 bg-slate-900 text-slate-200 text-xs rounded-xl px-3 py-2.5 shadow-xl border border-slate-700">
+                <span className="text-slate-500">Pierwotna nazwa:</span>
                 <br />
                 <span className="font-medium">{asset.original_name}</span>
-                {/* Arrow */}
-                <div className="absolute left-2 -bottom-1.5 w-3 h-3 bg-gray-800 rotate-45" />
+                <div className="absolute left-2 -bottom-1.5 w-3 h-3 bg-slate-900 rotate-45 border-r border-b border-slate-700" />
               </div>
             </div>
           )}
@@ -199,7 +201,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
 
         <div className="flex items-center gap-2 flex-wrap">
           <CategoryBadge category={asset.category} />
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-slate-500">
             {new Date(asset.created_at).toLocaleDateString('pl-PL')}
           </span>
         </div>
@@ -213,16 +215,16 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
             showCheck ? 'opacity-100 max-w-[7rem]' : 'opacity-0 max-w-0'
           }`}
         >
-          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-          <span className="text-xs font-medium text-emerald-600 whitespace-nowrap">Zaktualizowano</span>
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="text-xs font-medium text-emerald-400 whitespace-nowrap">Zaktualizowano</span>
         </div>
 
-        <span className="font-bold text-lg text-indigo-700 mr-1">{formatPLN(asset.value)}</span>
+        <span className="font-bold text-lg text-indigo-400 mr-1">{formatPLN(asset.value)}</span>
 
         {/* Edit button */}
         <button
           onClick={() => setEditing(true)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 transition-colors"
+          className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
           title="Edytuj nazwę / ilość"
         >
           <Pencil className="w-4 h-4" />
@@ -232,7 +234,7 @@ export default function AssetCard({ asset, onDelete, onEdit, deleting, refreshed
         <button
           onClick={() => onDelete(asset.id)}
           disabled={deleting}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
           title="Usuń aktywo"
         >
           {deleting ? (
