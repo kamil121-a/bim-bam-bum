@@ -28,15 +28,20 @@ type Mode = 'market' | 'description' | 'cash';
 type Step = 'input' | 'valuating' | 'confirm' | 'saving' | 'saved';
 
 interface ValuationResult {
-  estimatedValue:     number;
-  unitPrice:          number;
-  currency:           string;
-  confidence:         'high' | 'medium' | 'low';
-  source:             string;
-  suggestedCategory:  AssetCategory;
-  aiCategory:         string;
-  reasoning:          string;
+  estimatedValue:      number;
+  unitPrice:           number;
+  currency:            string;
+  confidence:          'high' | 'medium' | 'low';
+  source:              string;
+  suggestedCategory:   AssetCategory;
+  aiCategory:          string;
+  reasoning:           string;
   requiresManualPrice?: boolean;
+  // Real estate
+  isRealEstate?:       boolean;
+  pricePerM2?:         number;
+  area?:               number;
+  priceRange?:         { low: number; mid: number; high: number };
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -97,6 +102,9 @@ export default function AddAssetPage() {
   const [manualValue, setManualValue] = useState('');
   const [error,       setError]       = useState('');
 
+  // Real estate price variant: 'low' | 'mid' | 'high'
+  const [priceVariant, setPriceVariant] = useState<'low' | 'mid' | 'high'>('mid');
+
   // Market-mode state (ticker = XTB-style symbol, e.g. AAPL.US, PKN.PL, BTC)
   const [ticker,   setTicker]   = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -129,6 +137,7 @@ export default function AddAssetPage() {
     setValuation(data);
     setCategory(data.suggestedCategory);
     setManualValue('');
+    setPriceVariant('mid');
     setStep('confirm');
   };
 
@@ -248,20 +257,23 @@ export default function AddAssetPage() {
   const handleConfirm = async () => {
     if (!valuation || step === 'saving') return;
 
-    let finalValue: number;
+    let saveValue: number;
     if (valuation.requiresManualPrice) {
-      finalValue = parseFloat(manualValue);
-      if (isNaN(finalValue) || finalValue <= 0) {
+      saveValue = parseFloat(manualValue);
+      if (isNaN(saveValue) || saveValue <= 0) {
         setError('Podaj szacowaną wartość przedmiotu (musi być > 0 PLN).');
         return;
       }
+    } else if (isRealEstate && valuation.priceRange) {
+      saveValue = valuation.priceRange[priceVariant];
     } else {
-      finalValue = valuation.estimatedValue;
-      if (finalValue <= 0) {
+      saveValue = valuation.estimatedValue;
+      if (saveValue <= 0) {
         setError('Brak wyceny do zatwierdzenia.');
         return;
       }
     }
+    const finalValue = saveValue;
 
     // Asset name: market → ticker; cash → currency code; description → first 200 chars
     const assetName =
@@ -321,6 +333,7 @@ export default function AddAssetPage() {
     setCashAmount('');
     setValuation(null);
     setManualValue('');
+    setPriceVariant('mid');
     setError('');
   };
 
@@ -334,10 +347,14 @@ export default function AddAssetPage() {
     mode === 'cash'    ? cashCurrency :
     mode === 'market'  ? ticker.trim().toUpperCase() :
     (description.slice(0, 70) + (description.length > 70 ? '…' : ''));
-  const isManual      = valuation?.requiresManualPrice === true;
-  const finalValue    = isManual
-                          ? (parseFloat(manualValue) || 0)
-                          : (valuation?.estimatedValue ?? 0);
+  const isManual       = valuation?.requiresManualPrice === true;
+  const isRealEstate   = valuation?.isRealEstate === true && !!valuation?.priceRange;
+  const selectedRange  = isRealEstate ? (valuation!.priceRange![priceVariant]) : undefined;
+  const finalValue     = isManual
+                           ? (parseFloat(manualValue) || 0)
+                           : isRealEstate
+                             ? (selectedRange ?? valuation?.estimatedValue ?? 0)
+                             : (valuation?.estimatedValue ?? 0);
   const showBreakdown = !isManual && valuation && valuation.unitPrice > 0 && displayQty !== 1;
 
   if (loading) {
@@ -680,17 +697,19 @@ export default function AddAssetPage() {
                       <>
                         <p className="text-sm text-slate-400 mb-1">
                           {mode === 'description'
-                            ? 'Wycena AI (wartość rynkowa)'
+                            ? isRealEstate
+                              ? 'Wycena AI – wybierz poziom ceny'
+                              : 'Wycena AI (wartość rynkowa)'
                             : mode === 'cash'
                               ? `Gotówka ${cashCurrency} → PLN (kurs NBP)`
                               : 'Aktualna wartość giełdowa'}
                         </p>
                         <p className={`text-4xl font-bold ${
-                          mode === 'description' ? 'text-violet-700'  :
-                          mode === 'cash'        ? 'text-emerald-700' :
-                                                    'text-indigo-700'
+                          mode === 'description' ? 'text-violet-400'  :
+                          mode === 'cash'        ? 'text-emerald-400' :
+                                                    'text-indigo-400'
                         }`}>
-                          {formatPLN(valuation.estimatedValue)}
+                          {formatPLN(finalValue > 0 ? finalValue : valuation.estimatedValue)}
                         </p>
                       </>
                     )}
@@ -706,6 +725,50 @@ export default function AddAssetPage() {
               </div>
 
               <div className="px-8 py-6 space-y-5">
+
+                {/* ── Real estate price variant selector ── */}
+                {isRealEstate && valuation?.priceRange && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Wybierz poziom ceny względem średniej rynkowej
+                    </label>
+                    {valuation.pricePerM2 && (
+                      <p className="text-xs text-slate-500 mb-3">
+                        Średnia cena za m²:{' '}
+                        <strong className="text-slate-300">
+                          {valuation.pricePerM2.toLocaleString('pl-PL')} PLN/m²
+                        </strong>
+                        {valuation.area && (
+                          <span className="ml-1">· {valuation.area} m²</span>
+                        )}
+                      </p>
+                    )}
+                    <div className="grid grid-cols-3 gap-2">
+                      {(
+                        [
+                          { key: 'low',  label: 'Niższy',  sub: '-20%', color: 'border-blue-500/40 text-blue-300 bg-blue-500/10',   activeColor: 'border-blue-500 bg-blue-500/20 text-blue-200' },
+                          { key: 'mid',  label: 'Średni',  sub: '0%',   color: 'border-slate-600 text-slate-400 bg-slate-700',       activeColor: 'border-violet-500 bg-violet-500/20 text-violet-200' },
+                          { key: 'high', label: 'Wyższy',  sub: '+20%', color: 'border-amber-500/40 text-amber-300 bg-amber-500/10', activeColor: 'border-amber-500 bg-amber-500/20 text-amber-200' },
+                        ] as const
+                      ).map(({ key, label, sub, color, activeColor }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setPriceVariant(key)}
+                          className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-xs font-medium transition-all ${
+                            priceVariant === key ? activeColor : color
+                          }`}
+                        >
+                          <span className="font-semibold text-sm">{label}</span>
+                          <span className="opacity-70">{sub}</span>
+                          <span className="font-bold text-base mt-0.5">
+                            {formatPLN(valuation.priceRange![key])}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Asset summary */}
                 <div>
@@ -766,7 +829,7 @@ export default function AddAssetPage() {
                         <input
                           type="text"
                           readOnly
-                          value={formatPLN(valuation.estimatedValue)}
+                          value={formatPLN(finalValue > 0 ? finalValue : valuation.estimatedValue)}
                           className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-slate-400 cursor-not-allowed select-none"
                         />
                         <Lock className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
@@ -775,6 +838,7 @@ export default function AddAssetPage() {
                         <Lock className="w-3 h-3" />
                         {mode === 'market' ? 'Kwota z giełdy – nie można zmienić.' :
                          mode === 'cash'   ? 'Przeliczone z kursu NBP – nie można zmienić.' :
+                         isRealEstate      ? 'Wybierz wariant cenowy powyżej.' :
                                              'Wycena AI – kliknij "Od nowa" aby zmienić opis.'}
                       </p>
                     </>

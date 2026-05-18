@@ -33,18 +33,25 @@ export interface ValuationResult {
   aiCategory:          string;
   reasoning:           string;
   requiresManualPrice?: boolean;
+  // Real-estate extras
+  isRealEstate?:       boolean;
+  pricePerM2?:         number;
+  area?:               number;
+  priceRange?:         { low: number; mid: number; high: number };
 }
 
 // ─── DB category mapping ──────────────────────────────────────────────────────
 
 const AI_TO_DB: Record<string, AssetCategory> = {
-  Giełda:        'Finanse',
-  Krypto:        'Finanse',
-  Metale:        'Finanse',
-  Waluty:        'Finanse',
-  Elektronika:   'Elektronika',
-  Nieruchomości: 'Nieruchomości',
-  Inne:          'Inne',
+  Giełda:                       'Akcje',
+  Krypto:                       'Akcje',
+  Metale:                       'Kruszce',
+  Waluty:                       'Gotówka',
+  Elektronika:                  'Elektronika',
+  Nieruchomości:                'Nieruchomości',
+  Pojazdy:                      'Pojazdy',
+  'Przedmioty kolekcjonerskie': 'Przedmioty kolekcjonerskie',
+  Inne:                         'Inne',
 };
 
 function toDbCategory(raw: string): AssetCategory {
@@ -858,33 +865,48 @@ export async function estimateByDescription(description: string): Promise<Valuat
     const webContext  = await searchTavily(tavilyQuery, controller.signal);
 
     // ── Step 2: Build OpenAI system prompt ────────────────────────────────────
+    const jsonSchema = `{
+  "value": <całkowita wartość PLN, integer, > 0>,
+  "category": "Elektronika" | "Nieruchomości" | "Pojazdy" | "Przedmioty kolekcjonerskie" | "Inne",
+  "reasoning": "<max 35 słów>",
+  "pricePerM2": <integer, średnia cena za m² PLN – TYLKO gdy category="Nieruchomości", inaczej null>,
+  "area": <integer, metraż m² – TYLKO gdy category="Nieruchomości" i podano w opisie, inaczej null>
+}`;
+
     const systemPrompt = webContext
       ? `Jesteś ekspertem rynkowym wyceniającym rzeczy na polskim rynku wtórnym (2026).
 Użytkownik chce wycenić: "${description}"
 
-Aby pomóc Ci w precyzyjnej wycenie, przeszukaliśmy polski internet i znaleźliśmy następujące aktualne oferty oraz archiwa aukcyjne:
+Przeszukaliśmy polski internet i znaleźliśmy następujące aktualne oferty:
 
 ${webContext}
 
-Przeanalizuj powyższe realne dane z rynku:
-- Odrzuć skrajne anomalie cenowe (wyjątkowo tanie lub drogie oferty)
-- Wyznacz realny przedział cenowy dla tego konkretnego przedmiotu/egzemplarza
-- Oblicz kwotę możliwą do uzyskania przy normalnej sprzedaży
+Przeanalizuj realne dane z rynku, odrzuć anomalie i wyznacz realną cenę rynkową.
+
+KATEGORIE:
+- "Elektronika" – smartfony, laptopy, sprzęt RTV/AGD
+- "Nieruchomości" – mieszkania, domy, działki
+- "Pojazdy" – samochody, motocykle, pojazdy
+- "Przedmioty kolekcjonerskie" – monety, antyki, zegarki, numizmaty, rarytasy
+- "Inne" – wszystko pozostałe
 
 Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
-{"value":<całkowita wartość PLN, integer, > 0>,"category":"Elektronika"|"Nieruchomości"|"Inne","reasoning":"<max 35 słów, np. 'Na podstawie znalezionych ofert cena waha się od X do Y zł. Przyjęto średnią Z zł.'>"}
+${jsonSchema}
 
-Value MUSI być > 0.`
-      : `Jesteś ekspertem wyceny aktywów na polskim rynku (rok 2026). Oceń wartość rynkową na podstawie opisu użytkownika — to jest realna cena, za którą można sprzedać ten przedmiot/nieruchomość w Polsce.
+value MUSI być > 0.`
+      : `Jesteś ekspertem wyceny aktywów na polskim rynku (rok 2026). Oceń wartość rynkową na podstawie opisu użytkownika.
+
+KATEGORIE:
+- "Elektronika" – smartfony, laptopy, sprzęt RTV/AGD
+- "Nieruchomości" – mieszkania, domy, działki
+- "Pojazdy" – samochody, motocykle, pojazdy
+- "Przedmioty kolekcjonerskie" – monety, antyki, zegarki kolekcjonerskie, numizmaty
+- "Inne" – wszystko pozostałe
 
 Zwróć WYŁĄCZNIE JSON (zero dodatkowego tekstu):
-{"value":<całkowita wartość PLN, integer, zawsze > 0>,"category":"Elektronika"|"Nieruchomości"|"Inne","reasoning":"<max 25 słów, krótkie uzasadnienie ceny>"}
+${jsonSchema}
 
-Zasady wyceny:
-- Podaj realistyczną cenę rynkową (np. z OLX/Allegro dla przedmiotów, z rynku wtórnego dla nieruchomości)
-- Dla nieruchomości: uwzględnij lokalizację, metraż i standard
-- Dla przedmiotów kolekcjonerskich/unikatowych: oceń stan i rzadkość
-- Value MUSI być > 0`;
+Zasady: podaj realistyczną cenę z OLX/Allegro lub rynku wtórnego. value MUSI być > 0.`;
 
     // ── Step 3: Call OpenAI with (or without) web context ─────────────────────
     const completion = await getOpenAI().chat.completions.create(
@@ -905,7 +927,13 @@ Zasady wyceny:
     // ── Step 4: Parse and validate response ───────────────────────────────────
     const raw    = completion.choices[0]?.message?.content ?? '{}';
     console.log('[valuate] estimateByDescription response:', raw);
-    const parsed = JSON.parse(raw) as { value?: number; category?: string; reasoning?: string };
+    const parsed = JSON.parse(raw) as {
+      value?:      number;
+      category?:   string;
+      reasoning?:  string;
+      pricePerM2?: number | null;
+      area?:       number | null;
+    };
 
     const value       = typeof parsed.value === 'number' && parsed.value > 0
                           ? Math.round(parsed.value) : 0;
@@ -915,11 +943,21 @@ Zasady wyceny:
       return physicalResult(rawCategory, 'AI nie zwróciła wartości. Wpisz ją ręcznie.');
     }
 
+    const isRealEstate = rawCategory === 'Nieruchomości';
+    const pricePerM2   = isRealEstate && typeof parsed.pricePerM2 === 'number' && parsed.pricePerM2 > 0
+                           ? Math.round(parsed.pricePerM2) : undefined;
+    const area         = isRealEstate && typeof parsed.area === 'number' && parsed.area > 0
+                           ? Math.round(parsed.area) : undefined;
+    const priceRange   = isRealEstate ? {
+      low:  Math.round(value * 0.8),
+      mid:  value,
+      high: Math.round(value * 1.2),
+    } : undefined;
+
     return {
       estimatedValue:    value,
       unitPrice:         value,
       currency:          'PLN',
-      // With real web data the estimate is much more reliable
       confidence:        webContext ? 'high' : 'medium',
       source:            webContext
                            ? 'Tavily Web Search + OpenAI gpt-4o-mini'
@@ -927,6 +965,12 @@ Zasady wyceny:
       suggestedCategory: toDbCategory(rawCategory),
       aiCategory:        rawCategory,
       reasoning:         parsed.reasoning?.trim() ?? 'Szacunkowa wartość rynkowa wg AI.',
+      ...(isRealEstate && {
+        isRealEstate: true,
+        priceRange,
+        ...(pricePerM2 !== undefined && { pricePerM2 }),
+        ...(area !== undefined && { area }),
+      }),
     };
 
   } catch (err) {

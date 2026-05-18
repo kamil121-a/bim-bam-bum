@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
         currency:          'PLN',
         confidence:        'high',
         source:            currency === 'PLN' ? 'PLN (bezpośrednio)' : `Kurs NBP ${currency}/PLN (${today})`,
-        suggestedCategory: 'Finanse',
+        suggestedCategory: 'Gotówka',
         aiCategory:        'Gotówka',
         reasoning:
           currency === 'PLN'
@@ -141,14 +141,23 @@ export async function POST(request: NextRequest) {
       `Łącznie: ${estimatedValue} PLN`,
     );
 
+    // Detect category from ticker: metals → Kruszce, others → Akcje
+    const METAL_BASES = new Set([
+      'GOLD','XAU','SILVER','XAG','PLATINUM','XPT','PALLADIUM','XPD',
+      'COPPER','XCU','GLD','IAU','SLV','GDX','GDXJ','IGLN','SLVR',
+    ]);
+    const tickerBase        = displayTicker.split('.')[0];
+    const isMetalTicker     = METAL_BASES.has(tickerBase);
+    const autoCategory      = isMetalTicker ? 'Kruszce' : 'Akcje';
+
     return NextResponse.json({
       estimatedValue,
       unitPrice,
       currency:          'PLN',
       confidence:        'medium',
       source:            `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP`,
-      suggestedCategory: 'Finanse',
-      aiCategory:        'Giełda',
+      suggestedCategory: autoCategory,
+      aiCategory:        isMetalTicker ? 'Metale' : 'Giełda',
       reasoning:         priceData.reasoning,
     } as ValuationResult);
 
