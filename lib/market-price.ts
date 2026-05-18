@@ -107,19 +107,29 @@ export function isForeignTicker(raw: string): boolean {
 
 // ─── NBP exchange rates (official Polish central bank) ───────────────────────
 
-async function fetchNbpRate(currency: 'usd' | 'gbp' | 'eur'): Promise<number> {
+/**
+ * Fetches the mid-rate for any currency supported by NBP table A.
+ * Pass an ISO-4217 code (case-insensitive), e.g. 'usd', 'EUR', 'GBP'.
+ * Returns 1 for PLN (no conversion needed).
+ */
+export async function fetchNbpRateAny(currency: string): Promise<number> {
+  const code = currency.trim().toLowerCase();
+  if (code === 'pln') return 1;
+
   const res = await fetch(
-    `https://api.nbp.pl/api/exchangerates/rates/a/${currency}/?format=json`,
+    `https://api.nbp.pl/api/exchangerates/rates/a/${code}/?format=json`,
     { signal: AbortSignal.timeout(5_000) },
   );
-  if (!res.ok) throw new Error(`NBP HTTP ${res.status} for ${currency.toUpperCase()}`);
+  if (!res.ok) {
+    throw new Error(`NBP: brak kursu dla ${currency.toUpperCase()} (HTTP ${res.status})`);
+  }
   const data = await res.json() as { rates: { mid: number }[] };
   return data.rates[0].mid;
 }
 
-export async function fetchNbpUsdPln(): Promise<number> { return fetchNbpRate('usd'); }
-export async function fetchNbpGbpPln(): Promise<number> { return fetchNbpRate('gbp'); }
-export async function fetchNbpEurPln(): Promise<number> { return fetchNbpRate('eur'); }
+export async function fetchNbpUsdPln(): Promise<number> { return fetchNbpRateAny('usd'); }
+export async function fetchNbpGbpPln(): Promise<number> { return fetchNbpRateAny('gbp'); }
+export async function fetchNbpEurPln(): Promise<number> { return fetchNbpRateAny('eur'); }
 
 // ─── Tavily search ────────────────────────────────────────────────────────────
 

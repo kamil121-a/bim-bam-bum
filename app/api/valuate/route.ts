@@ -16,6 +16,7 @@ import {
   buildTavilyQuery,
   searchTavilyMarket,
   extractMarketPrice,
+  fetchNbpRateAny,
 } from '@/lib/market-price';
 
 export const maxDuration = 10;
@@ -32,6 +33,44 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createSupabaseServerClient(request);
+
+  // ── Option C: gotówka / waluta → przelicz przez kurs NBP ─────────────────────
+  if (body.mode === 'cash') {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const currency = typeof body.currency === 'string' ? body.currency.trim().toUpperCase() : 'PLN';
+    const amount   = typeof body.amount   === 'number' && body.amount > 0 ? body.amount : 0;
+
+    if (amount <= 0) {
+      return NextResponse.json({ error: 'Kwota musi być większa od 0.' }, { status: 400 });
+    }
+
+    try {
+      const rate     = await fetchNbpRateAny(currency);
+      const totalPln = amount * rate;
+      const today    = new Date().toLocaleDateString('pl-PL');
+
+      return NextResponse.json({
+        estimatedValue:    Math.round(totalPln),
+        unitPrice:         parseFloat(rate.toFixed(4)),
+        currency:          'PLN',
+        confidence:        'high',
+        source:            currency === 'PLN' ? 'PLN (bezpośrednio)' : `Kurs NBP ${currency}/PLN (${today})`,
+        suggestedCategory: 'Finanse',
+        aiCategory:        'Gotówka',
+        reasoning:
+          currency === 'PLN'
+            ? `Gotówka: ${amount.toLocaleString('pl-PL')} PLN`
+            : `${amount.toLocaleString('pl-PL')} ${currency} × ${rate.toFixed(4)} PLN/${currency} (kurs NBP, ${today}) = ${totalPln.toFixed(2)} PLN`,
+      } as ValuationResult);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Błąd pobierania kursu.';
+      return NextResponse.json({ error: msg }, { status: 422 });
+    }
+  }
 
   // ── Option B: opis / unikaty ──────────────────────────────────────────────────
   if (body.mode === 'description') {

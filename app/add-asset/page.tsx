@@ -19,11 +19,12 @@ import {
   PenLine,
   TrendingUp,
   FileText,
+  Banknote,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Mode = 'market' | 'description';
+type Mode = 'market' | 'description' | 'cash';
 type Step = 'input' | 'valuating' | 'confirm' | 'saving' | 'saved';
 
 interface ValuationResult {
@@ -73,6 +74,22 @@ const DESC_EXAMPLES = [
   'iPhone 15 Pro 256GB, kolor tytanowy, używany 6 miesięcy, stan idealny, oryginalne opakowanie',
 ];
 
+// Currencies supported by NBP table A (rate per 1 unit)
+const CASH_CURRENCIES: Array<{ code: string; name: string; flag: string }> = [
+  { code: 'PLN', name: 'Złoty',         flag: '🇵🇱' },
+  { code: 'USD', name: 'Dolar USA',     flag: '🇺🇸' },
+  { code: 'EUR', name: 'Euro',          flag: '🇪🇺' },
+  { code: 'GBP', name: 'Funt',         flag: '🇬🇧' },
+  { code: 'CHF', name: 'Frank szw.',    flag: '🇨🇭' },
+  { code: 'JPY', name: 'Jen',           flag: '🇯🇵' },
+  { code: 'CAD', name: 'Dolar kanad.',  flag: '🇨🇦' },
+  { code: 'AUD', name: 'Dolar austr.',  flag: '🇦🇺' },
+  { code: 'NOK', name: 'Korona norw.',  flag: '🇳🇴' },
+  { code: 'SEK', name: 'Korona szwedz.',flag: '🇸🇪' },
+  { code: 'CZK', name: 'Korona czes.',  flag: '🇨🇿' },
+  { code: 'HUF', name: 'Forint',        flag: '🇭🇺' },
+];
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AddAssetPage() {
@@ -96,6 +113,10 @@ export default function AddAssetPage() {
   // Description-mode state
   const [description, setDescription] = useState('');
 
+  // Cash-mode state
+  const [cashCurrency, setCashCurrency] = useState('USD');
+  const [cashAmount,   setCashAmount]   = useState('');
+
   useEffect(() => {
     if (!loading && !user) router.replace('/login');
   }, [user, loading, router]);
@@ -108,6 +129,7 @@ export default function AddAssetPage() {
     setError('');
     setTicker('');
     setDescription('');
+    setCashAmount('');
   };
 
   // ── Valuate helpers ──────────────────────────────────────────────────────────
@@ -197,6 +219,39 @@ export default function AddAssetPage() {
     }
   };
 
+  // ── Valuate: Cash (Option C – NBP exchange rate) ─────────────────────────────
+
+  const handleValuateCash = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (step === 'valuating') return;
+
+    const amt = parseFloat(cashAmount);
+    if (isNaN(amt) || amt <= 0) {
+      setError('Podaj kwotę większą od 0.');
+      return;
+    }
+
+    setError('');
+    setStep('valuating');
+
+    try {
+      const res = await fetch('/api/valuate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ mode: 'cash', currency: cashCurrency, amount: amt }),
+      });
+
+      if (res.status === 401) { router.replace('/login'); return; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as { error?: string }).error ?? `Błąd HTTP ${res.status}`);
+      }
+      applyValuationResult(await res.json());
+    } catch (err) {
+      handleValuateError(err);
+    }
+  };
+
   // ── Save ─────────────────────────────────────────────────────────────────────
 
   const handleConfirm = async () => {
@@ -217,13 +272,17 @@ export default function AddAssetPage() {
       }
     }
 
-    // Asset name: market → ticker; description → first 200 chars of description
-    const assetName = mode === 'market'
-      ? ticker.trim().toUpperCase()
-      : description.trim().slice(0, 200);
+    // Asset name: market → ticker; cash → currency code; description → first 200 chars
+    const assetName =
+      mode === 'market'      ? ticker.trim().toUpperCase() :
+      mode === 'cash'        ? cashCurrency :
+      description.trim().slice(0, 200);
 
-    // Quantity: description mode always 1
-    const assetQty = mode === 'market' ? (parseFloat(quantity) || 1) : 1;
+    // Quantity: cash → amount; description → 1; market → typed qty
+    const assetQty =
+      mode === 'cash'        ? (parseFloat(cashAmount) || 1) :
+      mode === 'market'      ? (parseFloat(quantity)   || 1) :
+      1;
 
     setError('');
     setStep('saving');
@@ -268,6 +327,7 @@ export default function AddAssetPage() {
     setTicker('');
     setQuantity('1');
     setDescription('');
+    setCashAmount('');
     setValuation(null);
     setManualValue('');
     setError('');
@@ -275,10 +335,14 @@ export default function AddAssetPage() {
 
   // ── Derived values ────────────────────────────────────────────────────────────
 
-  const displayQty    = mode === 'market' ? (parseFloat(quantity) || 1) : 1;
-  const displayName   = mode === 'market'
-                          ? ticker.trim().toUpperCase()
-                          : (description.slice(0, 70) + (description.length > 70 ? '…' : ''));
+  const displayQty  =
+    mode === 'cash'    ? (parseFloat(cashAmount) || 1) :
+    mode === 'market'  ? (parseFloat(quantity)   || 1) :
+    1;
+  const displayName =
+    mode === 'cash'    ? cashCurrency :
+    mode === 'market'  ? ticker.trim().toUpperCase() :
+    (description.slice(0, 70) + (description.length > 70 ? '…' : ''));
   const isManual      = valuation?.requiresManualPrice === true;
   const finalValue    = isManual
                           ? (parseFloat(manualValue) || 0)
@@ -308,11 +372,11 @@ export default function AddAssetPage() {
 
         {/* ── Mode tabs (only on input / valuating) ── */}
         {(step === 'input' || step === 'valuating') && (
-          <div className="flex gap-3 mb-6">
+          <div className="grid grid-cols-3 gap-2 mb-6">
             <button
               type="button"
               onClick={() => handleSwitchMode('market')}
-              className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl border font-medium text-sm transition-colors ${
+              className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border font-medium text-xs transition-colors ${
                 mode === 'market'
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
@@ -323,8 +387,20 @@ export default function AddAssetPage() {
             </button>
             <button
               type="button"
+              onClick={() => handleSwitchMode('cash')}
+              className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border font-medium text-xs transition-colors ${
+                mode === 'cash'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-200'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <Banknote className="w-4 h-4" />
+              Gotówka / Waluty
+            </button>
+            <button
+              type="button"
               onClick={() => handleSwitchMode('description')}
-              className={`flex-1 flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl border font-medium text-sm transition-colors ${
+              className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border font-medium text-xs transition-colors ${
                 mode === 'description'
                   ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-200'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
@@ -442,6 +518,97 @@ export default function AddAssetPage() {
               </form>
             )}
 
+            {/* ── OPTION C: Cash / Currency ── */}
+            {mode === 'cash' && (
+              <form onSubmit={handleValuateCash} className="space-y-5">
+                <div className="text-sm text-gray-500 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
+                  Wybierz walutę i wpisz kwotę. Kurs przeliczeniowy pochodzi z <strong className="text-emerald-700">oficjalnej tabeli NBP</strong> (Narodowy Bank Polski).
+                </div>
+
+                {/* Currency grid */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Waluta</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {CASH_CURRENCIES.map(c => (
+                      <button
+                        key={c.code}
+                        type="button"
+                        onClick={() => setCashCurrency(c.code)}
+                        disabled={step === 'valuating'}
+                        className={`flex flex-col items-center gap-0.5 py-2.5 px-1 rounded-xl border text-xs font-medium transition-colors disabled:opacity-50 ${
+                          cashCurrency === c.code
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : 'bg-white text-gray-700 border-gray-200 hover:bg-emerald-50 hover:border-emerald-200'
+                        }`}
+                      >
+                        <span className="text-base leading-none">{c.flag}</span>
+                        <span className="font-bold">{c.code}</span>
+                        <span className={`text-[10px] leading-tight text-center ${cashCurrency === c.code ? 'text-emerald-100' : 'text-gray-400'}`}>
+                          {c.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Amount input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Kwota w&nbsp;<span className="text-emerald-700 font-bold">{cashCurrency}</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-semibold text-sm pointer-events-none select-none">
+                      {CASH_CURRENCIES.find(c => c.code === cashCurrency)?.flag ?? '💵'}
+                    </span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      value={cashAmount}
+                      onChange={e => setCashAmount(e.target.value)}
+                      placeholder={`np. ${cashCurrency === 'JPY' ? '50000' : cashCurrency === 'PLN' ? '5000' : '1000'}`}
+                      className="w-full pl-12 pr-24 py-3.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition text-gray-900 placeholder-gray-400 font-mono text-lg"
+                      disabled={step === 'valuating'}
+                      autoFocus
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-semibold text-sm pointer-events-none">
+                      {cashCurrency}
+                    </span>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600 font-medium">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={step === 'valuating' || !cashAmount || parseFloat(cashAmount) <= 0}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors shadow-md shadow-emerald-200"
+                >
+                  {step === 'valuating' ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Pobieram kurs NBP…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Banknote className="w-4 h-4" />
+                      <span>Przelicz według kursu NBP</span>
+                    </>
+                  )}
+                </button>
+
+                {step === 'valuating' && (
+                  <p className="text-center text-xs text-gray-400 animate-pulse">
+                    Pobieranie oficjalnego kursu z Narodowego Banku Polskiego…
+                  </p>
+                )}
+              </form>
+            )}
+
             {/* ── OPTION B: Description ── */}
             {mode === 'description' && (
               <form onSubmit={handleValuateDescription} className="space-y-5">
@@ -531,9 +698,9 @@ export default function AddAssetPage() {
 
               {/* Value header */}
               <div className={`px-8 py-6 border-b border-gray-100 bg-gradient-to-br ${
-                mode === 'description'
-                  ? 'from-violet-50 to-purple-50'
-                  : 'from-indigo-50 to-blue-50'
+                mode === 'description' ? 'from-violet-50 to-purple-50'  :
+                mode === 'cash'        ? 'from-emerald-50 to-teal-50'   :
+                                         'from-indigo-50 to-blue-50'
               }`}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -558,10 +725,14 @@ export default function AddAssetPage() {
                         <p className="text-sm text-gray-500 mb-1">
                           {mode === 'description'
                             ? 'Wycena AI (wartość rynkowa)'
-                            : 'Aktualna wartość giełdowa'}
+                            : mode === 'cash'
+                              ? `Gotówka ${cashCurrency} → PLN (kurs NBP)`
+                              : 'Aktualna wartość giełdowa'}
                         </p>
                         <p className={`text-4xl font-bold ${
-                          mode === 'description' ? 'text-violet-700' : 'text-indigo-700'
+                          mode === 'description' ? 'text-violet-700'  :
+                          mode === 'cash'        ? 'text-emerald-700' :
+                                                    'text-indigo-700'
                         }`}>
                           {formatPLN(valuation.estimatedValue)}
                         </p>
@@ -650,7 +821,9 @@ export default function AddAssetPage() {
                         <Lock className="w-3 h-3" />
                         {mode === 'market'
                           ? 'Kwota pochodzi z giełdy – nie można jej zmienić ręcznie.'
-                          : 'Wycena AI – możesz kliknąć "Od nowa" i wpisać inny opis, by uzyskać inną wycenę.'}
+                          : mode === 'cash'
+                            ? 'Wartość przeliczona z oficjalnego kursu NBP – nie można zmienić ręcznie.'
+                            : 'Wycena AI – możesz kliknąć "Od nowa" i wpisać inny opis, by uzyskać inną wycenę.'}
                       </p>
                     </>
                   )}
