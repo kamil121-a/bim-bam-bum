@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import type { RankingEntry } from '@/types';
 
 export async function GET(request: NextRequest) {
-  // 1. Validate that the caller is authenticated (anon client, uses RLS session).
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  // 1. Validate that the caller is authenticated (cookies lub Bearer JWT).
+  const { user, error: authError } = await getSupabaseUserForApiRoute(request);
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

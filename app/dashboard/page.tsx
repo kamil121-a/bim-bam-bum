@@ -15,6 +15,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
+
+const supabase = createSupabaseBrowserClient();
+
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
 
@@ -57,7 +61,9 @@ export default function DashboardPage() {
   const fetchAssets = useCallback(async () => {
     setFetchLoading(true);
     try {
-      const res = await fetch('/api/assets', { signal: AbortSignal.timeout(12_000) });
+      const res = await fetchWithSupabaseAuth(supabase, '/api/assets', {
+        signal: AbortSignal.timeout(12_000),
+      });
       if (res.ok) {
         const data = await res.json();
         setAssets(data.assets ?? []);
@@ -75,14 +81,14 @@ export default function DashboardPage() {
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
-    const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
+    const res = await fetchWithSupabaseAuth(supabase, `/api/assets/${id}`, { method: 'DELETE' });
     if (res.ok) setAssets(prev => prev.filter(a => a.id !== id));
     setDeletingId(null);
   };
 
   const handleEdit = useCallback(
     async (id: string, changes: { name: string; quantity: number; category: AssetCategory }) => {
-      const res = await fetch(`/api/assets/${id}`, {
+      const res = await fetchWithSupabaseAuth(supabase, `/api/assets/${id}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(changes),
@@ -100,7 +106,7 @@ export default function DashboardPage() {
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      const res  = await fetch('/api/assets/refresh', { method: 'POST' });
+      const res  = await fetchWithSupabaseAuth(supabase, '/api/assets/refresh', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setAssets(data.assets);
@@ -130,7 +136,7 @@ export default function DashboardPage() {
     setRefreshingOther(true);
     setRefreshMsg(null);
     try {
-      const res  = await fetch('/api/assets/refresh', {
+      const res  = await fetchWithSupabaseAuth(supabase, '/api/assets/refresh', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ type: 'other' }),

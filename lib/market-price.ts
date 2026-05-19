@@ -4,15 +4,19 @@
  *   app/api/assets/refresh/route.ts   (batch refresh)
  *
  * Pipeline:
- *   ticker
- *     → buildTavilyQuery  (Yahoo Finance site: query)
- *     → searchTavilyMarket
- *     → extractMarketPrice (OpenAI – returns { currency, price })
- *     → if USD: fetchNbpUsdPln → multiply
- *     → unitPricePLN
+ *   ticker (GPW .PL / .WA)
+ *     → Yahoo Chart API (notowania .WA, mapy symboli np. KRUK.PL → KRU.WA)
+ *     → w razie braku: Tavily → extractMarketPrice (OpenAI) → NBP
  */
 
 import OpenAI from 'openai';
+
+export interface MarketPriceResult {
+  unitPricePLN: number;
+  reasoning:    string;
+  /** Źródło wyceny — Yahoo Chart jest pewniejszy dla GPW niż Tavily+GPT. */
+  source?: 'yahoo_chart' | 'tavily_ai';
+}
 
 // ─── OpenAI singleton ─────────────────────────────────────────────────────────
 
@@ -49,15 +53,38 @@ const METAL_QUERY: Record<string, string> = {
   XPD:       'palladium XPD price per ounce USD today',
 };
 
+/**
+ * Yahoo używa czasem innego kodu niż „litera z GPW + .WA” (np. KRUK → KRU.WA).
+ * Samo KRUK.WA w Yahoo to często „pusty” wpis bez notowań.
+ */
+const GPW_YAHOO_SYMBOL: Record<string, string> = {
+  'KRUK.PL': 'KRU.WA',
+  'KRUK.WA': 'KRU.WA',
+};
+
+/** Symbol Yahoo dla akcji z GPW (.PL / .WA lub mapa powyżej). */
+export function resolvePolishYahooSymbol(raw: string): string | null {
+  const t = raw.trim().toUpperCase();
+  const mapped = GPW_YAHOO_SYMBOL[t];
+  if (mapped) return mapped;
+  if (t.endsWith('.PL')) {
+    const base = t.slice(0, -3);
+    if (!/^[A-Z0-9-]+$/.test(base)) return null;
+    return `${base}.WA`;
+  }
+  if (t.endsWith('.WA')) return t;
+  return null;
+}
+
 // ─── Tavily query builder → Yahoo Finance only ────────────────────────────────
 
 export function buildTavilyQuery(raw: string): string {
   const t = raw.trim().toUpperCase();
 
-  // Polish GPW: KRUK.PL → KRUK.WA, suggest Yahoo Finance but don't lock to it
+  // GPW: zapytanie pod faktyczny symbol Yahoo (np. KRU.WA zamiast mylnego KRUK.WA)
   if (t.endsWith('.PL')) {
-    const sym = t.slice(0, -3);
-    return `Yahoo Finance ${sym}.WA aktualny kurs cena akcji 2026`;
+    const yahooSym = resolvePolishYahooSymbol(t) ?? `${t.slice(0, -3)}.WA`;
+    return `Yahoo Finance ${yahooSym} Warsaw GPW stock price PLN current 2026`;
   }
 
   // US stocks: NVDA.US → NVDA
@@ -131,6 +158,107 @@ export async function fetchNbpUsdPln(): Promise<number> { return fetchNbpRateAny
 export async function fetchNbpGbpPln(): Promise<number> { return fetchNbpRateAny('gbp'); }
 export async function fetchNbpEurPln(): Promise<number> { return fetchNbpRateAny('eur'); }
 
+const YAHOO_CHART_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+interface YahooChartMeta {
+  currency?:           string | null;
+  regularMarketPrice?: number;
+  chartPreviousClose?: number;
+  previousClose?:      number;
+  instrumentType?:     string;
+  exchangeName?:       string;
+}
+
+function parseYahooChartBody(data: unknown): { price: number; currency: string } | null {
+  const chart = data as { chart?: { result?: unknown[]; error?: unknown } };
+  const result = chart.chart?.result?.[0] as
+    | {
+        meta?: YahooChartMeta;
+        indicators?: { quote?: Array<{ close?: (number | null)[] }> };
+      }
+    | undefined;
+  if (!result?.meta || chart.chart?.error) return null;
+
+  const meta = result.meta;
+  let price = meta.regularMarketPrice;
+  if (typeof price !== 'number' || !isFinite(price) || price <= 0) {
+    price = meta.chartPreviousClose;
+  }
+  if (typeof price !== 'number' || !isFinite(price) || price <= 0) {
+    price = meta.previousClose;
+  }
+  if (typeof price !== 'number' || !isFinite(price) || price <= 0) {
+    const closes = result.indicators?.quote?.[0]?.close?.filter(
+      (x): x is number => typeof x === 'number' && isFinite(x) && x > 0,
+    );
+    if (closes?.length) price = closes[closes.length - 1]!;
+  }
+
+  if (typeof price !== 'number' || !isFinite(price) || price <= 0) return null;
+
+  let currency = (meta.currency ?? 'PLN').toUpperCase();
+  if (currency === 'NULL' || currency === '') currency = 'PLN';
+
+  return { price, currency };
+}
+
+/**
+ * Ostatnia znana cena z Yahoo Finance Chart API — działa dla większości GPW (.WA),
+ * o ile symbol jest poprawny (patrz {@link resolvePolishYahooSymbol}).
+ */
+export async function fetchYahooChartPrice(yahooSymbol: string): Promise<MarketPriceResult | null> {
+  const sym = yahooSymbol.trim().toUpperCase();
+  if (!sym) return null;
+
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}` +
+    '?interval=1d&range=5d';
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': YAHOO_CHART_UA },
+      signal:  AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) {
+      console.warn('[yahoo-chart]', sym, 'HTTP', res.status);
+      return null;
+    }
+
+    const parsed = parseYahooChartBody(await res.json());
+    if (!parsed) {
+      console.warn('[yahoo-chart]', sym, 'brak ceny w odpowiedzi');
+      return null;
+    }
+
+    const { price, currency } = parsed;
+
+    if (currency === 'PLN') {
+      return {
+        unitPricePLN: price,
+        reasoning:    `${sym} @ ${price} PLN (Yahoo Finance)`,
+        source:       'yahoo_chart',
+      };
+    }
+
+    let rate: number;
+    if (currency === 'GBP') rate = await fetchNbpGbpPln();
+    else if (currency === 'EUR') rate = await fetchNbpEurPln();
+    else rate = await fetchNbpUsdPln();
+
+    const pricePln = price * rate;
+    return {
+      unitPricePLN: pricePln,
+      reasoning:
+        `${sym} @ ${price} ${currency} × ${rate.toFixed(4)} NBP = ${pricePln.toFixed(2)} PLN (Yahoo Finance)`,
+      source: 'yahoo_chart',
+    };
+  } catch (err) {
+    console.warn('[yahoo-chart]', sym, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 // ─── Tavily search ────────────────────────────────────────────────────────────
 
 interface TavilyResult { title: string; content: string; url: string }
@@ -170,11 +298,6 @@ export async function searchTavilyMarket(query: string): Promise<string | null> 
 }
 
 // ─── OpenAI price extraction ──────────────────────────────────────────────────
-
-export interface MarketPriceResult {
-  unitPricePLN: number;
-  reasoning:    string;
-}
 
 /**
  * Ask GPT-4o-mini to extract the price from Yahoo Finance search results.
@@ -241,7 +364,11 @@ export async function extractMarketPrice(
 
     // PLN – no conversion needed
     if (currency === 'PLN') {
-      return { unitPricePLN: price, reasoning: `${ticker} @ ${price} PLN` };
+      return {
+        unitPricePLN: price,
+        reasoning:    `${ticker} @ ${price} PLN`,
+        source:       'tavily_ai',
+      };
     }
 
     // All other currencies → convert to PLN via official NBP rates
@@ -259,6 +386,7 @@ export async function extractMarketPrice(
     return {
       unitPricePLN: pricePln,
       reasoning:    `${ticker} @ ${price} ${currency} × ${rate.toFixed(4)} NBP = ${pricePln.toFixed(2)} PLN`,
+      source:       'tavily_ai',
     };
 
   } catch (err) {
@@ -270,11 +398,19 @@ export async function extractMarketPrice(
 // ─── High-level pipeline (used by refresh route) ──────────────────────────────
 
 export async function getMarketUnitPrice(ticker: string): Promise<MarketPriceResult | null> {
+  const t = ticker.trim().toUpperCase();
+  const yahooSym = resolvePolishYahooSymbol(t);
+  if (yahooSym) {
+    const direct = await fetchYahooChartPrice(yahooSym);
+    if (direct) return direct;
+    console.warn('[getMarketUnitPrice]', yahooSym, '— Yahoo chart bez ceny, fallback Tavily');
+  }
+
   const query = buildTavilyQuery(ticker);
   console.log('Wysłane zapytanie do Tavily:', query);
 
   const context = await searchTavilyMarket(query);
   if (!context) return null;
 
-  return extractMarketPrice(ticker, context);
+  return extractMarketPrice(t.trim(), context);
 }

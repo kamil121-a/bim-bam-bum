@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import { getMarketUnitPrice } from '@/lib/market-price';
 import type { Asset } from '@/types';
 
@@ -15,8 +15,7 @@ export const maxDuration = 10;
 
 export async function POST(request: NextRequest) {
   // Auth – only logged-in users can trigger this
-  const supabase = createSupabaseServerClient(request);
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  const { user, error: authError } = await getSupabaseUserForApiRoute(request);
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

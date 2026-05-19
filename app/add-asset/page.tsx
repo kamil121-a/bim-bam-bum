@@ -21,6 +21,9 @@ import {
   FileText,
   Banknote,
 } from 'lucide-react';
+import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
+
+const supabase = createSupabaseBrowserClient();
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -172,7 +175,7 @@ export default function AddAssetPage() {
     setStep('valuating');
 
     try {
-      const res = await fetch('/api/valuate', {
+      const res = await fetchWithSupabaseAuth(supabase, '/api/valuate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ ticker: t, quantity: qty }),
@@ -204,7 +207,7 @@ export default function AddAssetPage() {
     setStep('valuating');
 
     try {
-      const res = await fetch('/api/valuate', {
+      const res = await fetchWithSupabaseAuth(supabase, '/api/valuate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ mode: 'description', description: description.trim() }),
@@ -237,7 +240,7 @@ export default function AddAssetPage() {
     setStep('valuating');
 
     try {
-      const res = await fetch('/api/valuate', {
+      const res = await fetchWithSupabaseAuth(supabase, '/api/valuate', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ mode: 'cash', currency: cashCurrency, amount: amt }),
@@ -297,7 +300,7 @@ export default function AddAssetPage() {
     setStep('saving');
 
     try {
-      const res = await fetch('/api/assets', {
+      const res = await fetchWithSupabaseAuth(supabase, '/api/assets', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({

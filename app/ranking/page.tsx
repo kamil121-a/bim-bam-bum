@@ -7,6 +7,9 @@ import Navigation from '@/components/Navigation';
 import { formatPLN } from '@/components/AssetCard';
 import type { RankingEntry } from '@/types';
 import { Trophy, Crown, RefreshCw, Zap } from 'lucide-react';
+import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
+
+const supabase = createSupabaseBrowserClient();
 
 const MEDAL: Record<number, { icon: string; color: string; bg: string }> = {
   0: { icon: '🥇', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
@@ -29,7 +32,7 @@ export default function RankingPage() {
   }, [user, loading, router]);
 
   const fetchRanking = useCallback(async () => {
-    const res = await fetch('/api/ranking');
+    const res = await fetchWithSupabaseAuth(supabase, '/api/ranking');
     if (res.ok) {
       const data = await res.json();
       setRanking(data.ranking);
@@ -53,7 +56,7 @@ export default function RankingPage() {
     setRefreshingAll(true);
     setRefreshAllMsg(null);
     try {
-      const res  = await fetch('/api/ranking/refresh-all', { method: 'POST' });
+      const res  = await fetchWithSupabaseAuth(supabase, '/api/ranking/refresh-all', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setRefreshAllMsg(`Zaktualizowano ${data.updated} aktywów u ${data.users} użytkowników.`);

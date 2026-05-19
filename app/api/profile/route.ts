@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute } from '@/lib/supabase';
 
 const MIN_LEN = 2;
 const MAX_LEN = 40;
@@ -8,11 +8,7 @@ const MAX_LEN = 40;
  * PATCH /api/profile — zmiana nicku (`profiles.username`), tylko dla zalogowanego użytkownika.
  */
 export async function PATCH(request: NextRequest) {
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
+  const { supabase, user, error: authErr } = await getSupabaseUserForApiRoute(request);
 
   if (authErr || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -39,10 +35,11 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const { error: upErr } = await supabase
-    .from('profiles')
-    .update({ username: raw })
-    .eq('id', user.id);
+  // Upsert: starsze konta mogły nie dostać wiersza w `profiles` (brak triggera).
+  const { error: upErr } = await supabase.from('profiles').upsert(
+    { id: user.id, username: raw },
+    { onConflict: 'id' },
+  );
 
   if (upErr) {
     console.error('[PATCH /api/profile]', upErr);

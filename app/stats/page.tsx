@@ -9,6 +9,9 @@ import CategoryBadge from '@/components/CategoryBadge';
 import type { AssetCategory } from '@/types';
 import { ASSET_CATEGORIES } from '@/types';
 import { BarChart2, Users, RefreshCw, Coins, Trophy } from 'lucide-react';
+import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
+
+const supabase = createSupabaseBrowserClient();
 
 interface UserData {
   id:           string;
@@ -81,7 +84,7 @@ export default function StatsPage() {
   const fetchStats = useCallback(async () => {
     setFetchLoading(true);
     try {
-      const res = await fetch('/api/stats');
+      const res = await fetchWithSupabaseAuth(supabase, '/api/stats');
       if (res.ok) setData(await res.json());
     } catch (e) {
       console.error('[stats]', e);

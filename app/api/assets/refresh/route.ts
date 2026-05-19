@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import { getMarketUnitPrice } from '@/lib/market-price';
 import { estimateByDescription } from '@/lib/valuate';
 import type { Asset } from '@/types';
@@ -28,8 +28,7 @@ export async function POST(request: NextRequest) {
   } catch { /* no body – default to finance */ }
 
   // ── Auth + fetch assets in parallel ─────────────────────────────────────────
-  const supabase = createSupabaseServerClient(request);
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  const { supabase, user, error: authError } = await getSupabaseUserForApiRoute(request);
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

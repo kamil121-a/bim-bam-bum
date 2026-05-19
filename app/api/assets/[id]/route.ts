@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import { ASSET_CATEGORIES } from '@/types';
 import type { AssetCategory } from '@/types';
 
@@ -8,11 +8,7 @@ type Params = { params: Promise<{ id: string }> };
 // ── DELETE ────────────────────────────────────────────────────────────────────
 
 export async function DELETE(request: NextRequest, { params }: Params) {
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const { supabase, user, error: authError } = await getSupabaseUserForApiRoute(request);
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -52,11 +48,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 // ── PATCH – edit name and/or quantity ────────────────────────────────────────
 
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const { supabase, user, error: authError } = await getSupabaseUserForApiRoute(request);
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

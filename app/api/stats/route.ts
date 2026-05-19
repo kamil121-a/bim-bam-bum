@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import { ASSET_CATEGORIES } from '@/types';
 
 /** Gotówka: pole `name` = kod waluty (PLN, USD, EUR, DKK). */
@@ -70,8 +70,7 @@ async function enrichMissingUsernames(
 }
 
 export async function GET(request: NextRequest) {
-  const supabase = createSupabaseServerClient(request);
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
+  const { user, error: authErr } = await getSupabaseUserForApiRoute(request);
   if (authErr || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

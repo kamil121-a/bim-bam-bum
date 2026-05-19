@@ -1,21 +1,19 @@
 /**
  * Valuation endpoint
  *
- * Option A (ticker / krypto / kruszce):
- *   buildTavilyQuery → Tavily Search → [NBP USD/PLN dla aktywów zagranicznych] → OpenAI → unitPricePLN × quantity
+ * Option A (ticker):
+ *   GPW (.PL) → Yahoo Chart API (szybko, poprawne symbole np. KRU.WA dla KRUK.PL), potem Tavily+GPT.
  *
  * Option B (opis / unikaty):
- *   estimateByDescription  (Tavily + OpenAI, osobna logika dla rynku wtórnego)
+ *   estimateByDescription  (Tavily + OpenAI)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute } from '@/lib/supabase';
 import { estimateByDescription } from '@/lib/valuate';
 import type { ValuationResult } from '@/lib/valuate';
 import {
-  buildTavilyQuery,
-  searchTavilyMarket,
-  extractMarketPrice,
+  getMarketUnitPrice,
   fetchNbpRateAny,
 } from '@/lib/market-price';
 
@@ -32,7 +30,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Nieprawidłowe dane żądania.' }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient(request);
+  const { supabase } = await getSupabaseUserForApiRoute(request);
 
   // ── Option C: gotówka / waluta → przelicz przez kurs NBP ─────────────────────
   if (body.mode === 'cash') {
@@ -105,28 +103,16 @@ export async function POST(request: NextRequest) {
   console.log(`[valuate] Opcja A – ticker: "${displayTicker}", qty: ${quantity}`);
 
   try {
-    // ── Kluczowa optymalizacja: auth + Tavily równolegle ─────────────────────
-    // Vercel Hobby limit: 10 s. Supabase getUser() zajmuje ~2-4 s na cold starcie.
-    // Tavily zajmuje do 5 s. Uruchamiając je jednocześnie, całkowity czas ≤ 7 s.
-    const optimizedQuery = buildTavilyQuery(ticker);
-    console.log('Wysłane zapytanie do Tavily:', optimizedQuery);
-
-    const [authResult, context] = await Promise.all([
+    // Auth + wycena równolegle (Yahoo Chart dla GPW jest szybki; Tavily+GPT bywa wolniejszy).
+    const [authResult, priceData] = await Promise.all([
       supabase.auth.getUser(),
-      searchTavilyMarket(optimizedQuery),
+      getMarketUnitPrice(displayTicker),
     ]);
 
     const { data: { user }, error: authError } = authResult;
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    if (!context) {
-      throw new Error('Tavily nie zwróciło żadnych wyników. Sprawdź klucz API lub połączenie.');
-    }
-
-    // ── Wyciągnij cenę przez OpenAI; konwersja walut via NBP jest wewnątrz ────
-    const priceData = await extractMarketPrice(displayTicker, context);
 
     if (!priceData || priceData.unitPricePLN <= 0) {
       throw new Error('Nie udało się automatycznie wycenić tego symbolu.');
@@ -136,9 +122,7 @@ export async function POST(request: NextRequest) {
     const estimatedValue = Math.round(unitPrice * quantity);
 
     console.log(
-      `Wykryto ticker: ${displayTicker} |`,
-      `Cena: ${unitPrice} PLN/szt. |`,
-      `Łącznie: ${estimatedValue} PLN`,
+      `[valuate] ${displayTicker} | ${unitPrice} PLN/szt. | razem ${estimatedValue} PLN | źródło: ${priceData.source ?? '?'}`,
     );
 
     // Detect category from ticker: metals → Kruszce, others → Akcje
@@ -150,12 +134,18 @@ export async function POST(request: NextRequest) {
     const isMetalTicker     = METAL_BASES.has(tickerBase);
     const autoCategory      = isMetalTicker ? 'Kruszce' : 'Akcje';
 
+    const confidence = priceData.source === 'yahoo_chart' ? 'high' : 'medium';
+    const sourceLabel =
+      priceData.source === 'yahoo_chart'
+        ? `Yahoo Finance (${displayTicker})`
+        : `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP`;
+
     return NextResponse.json({
       estimatedValue,
       unitPrice,
       currency:          'PLN',
-      confidence:        'medium',
-      source:            `Yahoo Finance (Tavily) + GPT-4o-mini (${displayTicker}) + NBP`,
+      confidence,
+      source:            sourceLabel,
       suggestedCategory: autoCategory,
       aiCategory:        isMetalTicker ? 'Metale' : 'Giełda',
       reasoning:         priceData.reasoning,

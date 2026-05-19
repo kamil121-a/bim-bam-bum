@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseServerClient, createSupabaseAdminClient } from '@/lib/supabase';
+import { getSupabaseUserForApiRoute, createSupabaseAdminClient } from '@/lib/supabase';
 import type { AssetCategory } from '@/types';
 
 export const maxDuration = 10;
 
 export async function GET(request: NextRequest) {
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const { supabase, user, error: authError } = await getSupabaseUserForApiRoute(request);
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -36,11 +32,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   // ── 1. Validate session ──────────────────────────────────────────────────────
-  const supabase = createSupabaseServerClient(request);
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const { supabase, user, error: authError } = await getSupabaseUserForApiRoute(request);
 
   if (authError || !user) {
     console.warn('[POST /api/assets] Auth failed:', authError?.message ?? 'no user');

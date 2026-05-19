@@ -8,7 +8,7 @@ import {
   useCallback,
   ReactNode,
 } from 'react';
-import { createSupabaseBrowserClient } from '@/lib/supabase';
+import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 interface AuthUser {
@@ -222,11 +222,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateUsername = useCallback(
     async (username: string) => {
-      const res = await fetch('/api/profile', {
-        method:      'PATCH',
-        credentials: 'same-origin',
-        headers:     { 'Content-Type': 'application/json' },
-        body:        JSON.stringify({ username }),
+      const res = await fetchWithSupabaseAuth(supabase, '/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ username }),
       });
       let payload: { error?: string } = {};
       try {
