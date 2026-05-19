@@ -5,10 +5,13 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { NextRequest } from 'next/server';
+import { getSupabaseSessionCookieName } from '@/lib/supabase-session-storage-key';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+const SESSION_COOKIE = { name: getSupabaseSessionCookieName() };
 
 /**
  * Browser client – use in Client Components and AuthContext.
@@ -17,9 +20,13 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
  * detectSessionInUrl: false  – prevents the client from parsing session tokens
  *   out of URL hash fragments (happens after OAuth). Without this flag, a stale
  *   or malformed URL can corrupt the stored session and cause an auth loop.
+ *
+ * cookieOptions.name — ten sam prefiks co middleware i Route Handlers; wersja `-v2`
+ * odcina stare uszkodzone ciasteczka po zmianach auth.
  */
 export function createSupabaseBrowserClient() {
   return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    cookieOptions: SESSION_COOKIE,
     auth: {
       detectSessionInUrl: false,
       persistSession:     true,
@@ -35,11 +42,12 @@ export function createSupabaseBrowserClient() {
  */
 export function createSupabaseServerClient(request: NextRequest) {
   return createSSRServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    cookieOptions: SESSION_COOKIE,
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      // Cookie writes happen in middleware; route handlers are read-only.
+      // Zapisy obsługuje middleware — tutaj tylko odczyt żądania.
       setAll() {},
     },
   });

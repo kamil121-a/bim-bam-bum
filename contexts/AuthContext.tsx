@@ -51,7 +51,8 @@ async function fetchProfile(
       .from('profiles')
       .select('username')
       .eq('id', userId)
-      .single();
+      .abortSignal(AbortSignal.timeout(8_000))
+      .maybeSingle();
 
     return {
       id:       userId,
@@ -59,7 +60,7 @@ async function fetchProfile(
       username: (data?.username as string | null) ?? fallbackEmail.split('@')[0],
     };
   } catch {
-    // Profile table unreachable – return minimal object so the app still works.
+    // Timeout sieci / profil niedostępny — aplikacja nadal działa z fallbackiem.
     return { id: userId, email: fallbackEmail, username: fallbackEmail.split('@')[0] };
   }
 }
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     /**
      * Session guard strategy (two-step, non-blocking)
      * ─────────────────────────────────────────────────
-     * Step A  init() – FAST PATH via getSession() (reads localStorage, zero network)
+     * Step A  init() – FAST PATH via getSession() (odczyt z ciasteczek sesji, bez sieci)
      *   • Token found & not expired → show user instantly, unblock UI.
      *   • No token / expired        → show login page instantly.
      *   Background: getUser() validates the token with the Supabase server.
@@ -100,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      */
     const init = async () => {
       try {
-        // ── Fast path: read cached session from localStorage ──────────────────
+        // ── Fast path: odczyt sesji z ciasteczek (chunki @supabase/ssr) ───────────
         // getSession() is normally instant (reads localStorage) but CAN make a
         // network request if the token is expired and needs refreshing.
         // Promise.race with a 4-second timeout ensures we never hang.
@@ -132,17 +133,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);  // ← UI unblocked instantly
 
         // ── Background: validate token with server + load real profile ────────
-        // If the token is stale/revoked, sign out silently after the page loads.
-        supabase.auth.getUser()
-          .then(async ({ data: { user: serverUser }, error }) => {
+        const BG_MS = 12_000;
+        Promise.race([
+          supabase.auth.getUser().then((r) => ({ kind: 'result' as const, r })),
+          new Promise<{ kind: 'timeout' }>((resolve) =>
+            setTimeout(() => resolve({ kind: 'timeout' }), BG_MS),
+          ),
+        ])
+          .then(async (wrapped) => {
             if (!mounted) return;
+            if (wrapped.kind === 'timeout') {
+              console.warn('[auth] background getUser timeout — signing out (likely stale session)');
+              await supabase.auth.signOut().catch(() => {});
+              if (mounted) setUser(null);
+              return;
+            }
+            const { data: { user: serverUser }, error } = wrapped.r;
             if (error || !serverUser) {
               console.warn('[auth] background token validation failed – signing out:', error?.message);
               await supabase.auth.signOut().catch(() => {});
               if (mounted) setUser(null);
               return;
             }
-            // Replace placeholder with real profile data
             const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
             if (mounted) setUser(profile);
           })
@@ -185,8 +197,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // and redirecting to /login. For TOKEN_REFRESHED, user is already shown
           // so we update silently without touching the loading flag.
           if (event === 'SIGNED_IN' && mounted) setLoading(true);
-          const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
-          if (mounted) { setUser(profile); setLoading(false); }
+          try {
+            const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
+            if (mounted) setUser(profile);
+          } finally {
+            if (mounted) setLoading(false);
+          }
         } else {
           if (mounted) { setUser(null); setLoading(false); }
         }
@@ -198,6 +214,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       subscription.unsubscribe();
     };
   }, [supabase]);
+
+  /**
+   * Jeśli init/auth utknie (np. sieć, zepsuta sesja), nie zostawiaj użytkownika na wiecznym spinnerze.
+   */
+  useEffect(() => {
+    if (!loading) return;
+    const id = window.setTimeout(() => {
+      console.warn('[auth] watchdog: loading > 20s — clearing session');
+      void supabase.auth.signOut().finally(() => {
+        setUser(null);
+        setLoading(false);
+      });
+    }, 20_000);
+    return () => clearTimeout(id);
+  }, [loading, supabase]);
 
   const login = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
