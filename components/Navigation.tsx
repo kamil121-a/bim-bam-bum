@@ -2,8 +2,18 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { LayoutDashboard, PlusCircle, Trophy, LogOut, Wallet, BarChart2 } from 'lucide-react';
+import EditUsernameModal from '@/components/EditUsernameModal';
+import {
+  LayoutDashboard,
+  PlusCircle,
+  Trophy,
+  LogOut,
+  Wallet,
+  BarChart2,
+  UserRound,
+} from 'lucide-react';
 
 const NAV_LINKS = [
   { href: '/dashboard', label: 'Panel',        icon: LayoutDashboard },
@@ -15,7 +25,8 @@ const NAV_LINKS = [
 export default function Navigation() {
   const pathname = usePathname();
   const router   = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, updateUsername } = useAuth();
+  const [usernameModalOpen, setUsernameModalOpen] = useState(false);
 
   const handleLogout = async () => {
     await logout();
@@ -23,6 +34,7 @@ export default function Navigation() {
   };
 
   return (
+    <>
     <nav className="bg-slate-900 border-b border-slate-700/60 shadow-lg sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="flex items-center justify-between h-16">
@@ -57,9 +69,23 @@ export default function Navigation() {
           {/* User + logout */}
           <div className="flex items-center gap-3">
             {user && (
-              <span className="hidden sm:block text-sm text-slate-400 font-medium">
-                {user.username}
-              </span>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setUsernameModalOpen(true)}
+                  className="sm:hidden flex items-center justify-center p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-indigo-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  aria-label="Zmień nick"
+                >
+                  <UserRound className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUsernameModalOpen(true)}
+                  className="hidden sm:inline-flex text-sm text-slate-400 font-medium hover:text-indigo-300 rounded-lg px-2 py-1 transition-colors hover:bg-slate-800/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                >
+                  {user.username}
+                </button>
+              </>
             )}
             <button
               onClick={handleLogout}
@@ -73,5 +99,15 @@ export default function Navigation() {
         </div>
       </div>
     </nav>
+
+    {user && (
+      <EditUsernameModal
+        open={usernameModalOpen}
+        onClose={() => setUsernameModalOpen(false)}
+        username={user.username}
+        onSaved={updateUsername}
+      />
+    )}
+    </>
   );
 }

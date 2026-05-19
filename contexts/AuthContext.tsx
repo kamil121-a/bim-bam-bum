@@ -28,6 +28,8 @@ interface AuthContextType {
   ) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Zapisuje nick w `profiles` (PATCH `/api/profile`) i odświeża profil w stanie. */
+  updateUsername: (username: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -218,8 +220,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const updateUsername = useCallback(
+    async (username: string) => {
+      const res = await fetch('/api/profile', {
+        method:      'PATCH',
+        credentials: 'same-origin',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ username }),
+      });
+      let payload: { error?: string } = {};
+      try {
+        payload = await res.json();
+      } catch {
+        /* ignore */
+      }
+      if (!res.ok) {
+        throw new Error(
+          typeof payload.error === 'string'
+            ? payload.error
+            : 'Nie udało się zapisać nicku.',
+        );
+      }
+      await supabase.auth.updateUser({ data: { username } }).catch(() => {});
+      await refresh();
+    },
+    [supabase, refresh],
+  );
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, logout, refresh, updateUsername }}
+    >
       {children}
     </AuthContext.Provider>
   );
