@@ -274,7 +274,7 @@ export default function DashboardPage() {
         )}
 
         {/* ── Summary card (tylko majątek) ── */}
-        <div className="mb-8 space-y-3">
+        <div className="mb-8">
           <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-xl shadow-indigo-900/30 flex items-center gap-6">
             <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
               <TrendingUp className="w-6 h-6" />
@@ -297,9 +297,6 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-          <p className="text-center text-sm italic text-slate-500 tracking-wide">
-            last one to touch a mil is a bitch
-          </p>
         </div>
 
         {/* ── Assets ── */}

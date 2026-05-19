@@ -12,11 +12,73 @@ import { Trophy, Crown, RefreshCw, Zap } from 'lucide-react';
 import { fetchWithSupabaseAuth } from '@/lib/supabase';
 import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
+const MILLION_PLN = 1_000_000;
+
 const MEDAL: Record<number, { icon: string; color: string; bg: string }> = {
   0: { icon: '🥇', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
   1: { icon: '🥈', color: 'text-slate-400',  bg: 'bg-slate-700/60 border-slate-600/50' },
   2: { icon: '🥉', color: 'text-amber-500',  bg: 'bg-amber-500/10 border-amber-500/30' },
 };
+
+function pctOfMillion(value: number): number {
+  return MILLION_PLN > 0 ? (value / MILLION_PLN) * 100 : 0;
+}
+
+function formatPctOfMillion(value: number): string {
+  return pctOfMillion(value).toLocaleString('pl-PL', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function MillionBadge({
+  value,
+  variant = 'default',
+}: {
+  value: number;
+  variant?: 'default' | 'podium' | 'compact';
+}) {
+  const pct = formatPctOfMillion(value);
+  const bar = Math.min(pctOfMillion(value), 100);
+
+  if (variant === 'compact') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 tabular-nums">
+        <span className="h-1 w-10 rounded-full bg-slate-700 overflow-hidden">
+          <span
+            className="block h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400"
+            style={{ width: `${bar}%` }}
+          />
+        </span>
+        {pct}% miliona
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className={`flex flex-col items-end gap-1.5 ${
+        variant === 'podium' ? 'min-w-[7.5rem]' : ''
+      }`}
+    >
+      <span
+        className={`inline-flex items-center rounded-full border font-semibold tabular-nums ${
+          variant === 'podium'
+            ? 'px-2.5 py-1 text-xs border-amber-500/25 bg-amber-500/10 text-amber-200'
+            : 'px-2 py-0.5 text-[11px] border-slate-600/80 bg-slate-900/60 text-slate-300'
+        }`}
+      >
+        {pct}% miliona
+      </span>
+      <span className="w-full max-w-[6.5rem] h-1 rounded-full bg-slate-700/80 overflow-hidden">
+        <span
+          className="block h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-400"
+          style={{ width: `${bar}%` }}
+        />
+      </span>
+    </div>
+  );
+}
 
 export default function RankingPage() {
   const { user, loading } = useAuth();
@@ -134,6 +196,10 @@ export default function RankingPage() {
           </div>
         </div>
 
+        <p className="mb-6 text-center text-sm italic text-slate-500/90 tracking-wide px-4 py-3 rounded-xl bg-slate-800/40 border border-slate-700/50">
+          last one to touch a mil is a bitch
+        </p>
+
         {/* Status message */}
         {refreshAllMsg && (
           <div className="mb-6 px-4 py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-sm text-emerald-300">
@@ -185,15 +251,11 @@ export default function RankingPage() {
                         </p>
                       </div>
 
-                      <div className="text-right flex-shrink-0">
-                        <p className={`text-2xl font-bold ${isMe ? 'text-indigo-400' : medal.color}`}>
+                      <div className="text-right flex-shrink-0 flex flex-col items-end gap-2">
+                        <p className={`text-2xl font-bold tabular-nums ${isMe ? 'text-indigo-400' : medal.color}`}>
                           {formatPLN(entry.totalValue)}
                         </p>
-                        {idx > 0 && topThree[0].totalValue > 0 && (
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            {Math.round((entry.totalValue / topThree[0].totalValue) * 100)}% lidera
-                          </p>
-                        )}
+                        <MillionBadge value={entry.totalValue} variant="podium" />
                       </div>
                     </div>
                   );
@@ -230,9 +292,12 @@ export default function RankingPage() {
                           {entry.assetCount} {entry.assetCount === 1 ? 'aktywo' : entry.assetCount < 5 ? 'aktywa' : 'aktywów'}
                         </p>
                       </div>
-                      <p className={`font-bold text-lg ${isMe ? 'text-indigo-400' : 'text-slate-300'}`}>
-                        {formatPLN(entry.totalValue)}
-                      </p>
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <p className={`font-bold text-lg tabular-nums ${isMe ? 'text-indigo-400' : 'text-slate-300'}`}>
+                          {formatPLN(entry.totalValue)}
+                        </p>
+                        <MillionBadge value={entry.totalValue} variant="compact" />
+                      </div>
                     </div>
                   );
                 })}
@@ -246,6 +311,10 @@ export default function RankingPage() {
                   <strong>#{userRank + 1}</strong> z {ranking.length} ·{' '}
                   Twój majątek:{' '}
                   <strong>{formatPLN(ranking[userRank].totalValue)}</strong>
+                  {' '}·{' '}
+                  <strong className="text-amber-200/90">
+                    {formatPctOfMillion(ranking[userRank].totalValue)}% miliona
+                  </strong>
                 </p>
               </div>
             )}
