@@ -70,10 +70,17 @@ export async function getSupabaseUserForApiRoute(request: NextRequest) {
  * fetch z JWT użytkownika — Route Handlers mogą zweryfikować sesję bez polegania wyłącznie na ciasteczkach.
  */
 export async function fetchWithSupabaseAuth(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient | null,
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  if (!supabase) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   let token: string | undefined;
   try {
     const raced = await Promise.race([

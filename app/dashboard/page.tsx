@@ -18,6 +18,8 @@ import {
 import { fetchWithSupabaseAuth } from '@/lib/supabase';
 import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
+export const dynamic = 'force-dynamic';
+
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
 
@@ -59,6 +61,7 @@ export default function DashboardPage() {
   }, [user, loading, router]);
 
   const fetchAssets = useCallback(async () => {
+    if (!supabase) return;
     setFetchLoading(true);
     try {
       const res = await fetchWithSupabaseAuth(supabase, '/api/assets', {
@@ -73,13 +76,14 @@ export default function DashboardPage() {
     } finally {
       setFetchLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
-    if (user) fetchAssets();
-  }, [user, fetchAssets]);
+    if (user && supabase) fetchAssets();
+  }, [user, supabase, fetchAssets]);
 
   const handleDelete = async (id: string) => {
+    if (!supabase) return;
     setDeletingId(id);
     const res = await fetchWithSupabaseAuth(supabase, `/api/assets/${id}`, { method: 'DELETE' });
     if (res.ok) setAssets(prev => prev.filter(a => a.id !== id));

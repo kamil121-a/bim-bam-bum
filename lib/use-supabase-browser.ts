@@ -4,11 +4,15 @@ import { useRef } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 
-/** Jedna instancja Supabase na komponent (tylko w przeglądarce). */
-export function useSupabaseBrowser(): SupabaseClient {
+/**
+ * Klient Supabase tylko w przeglądarce (nie wywołuj podczas SSR / prerenderu Vercel).
+ */
+export function useSupabaseBrowser(): SupabaseClient | null {
   const ref = useRef<SupabaseClient | null>(null);
-  if (!ref.current) {
+
+  if (typeof window !== 'undefined' && !ref.current) {
     ref.current = createSupabaseBrowserClient();
   }
+
   return ref.current;
 }

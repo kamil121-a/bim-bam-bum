@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { isProtectedPath } from '@/lib/supabase-auth-config';
 import { Wallet, Eye, EyeOff, LogIn } from 'lucide-react';
+
+export const dynamic = 'force-dynamic';
 
 function redirectAfterAuth(next: string | null): string {
   if (next && next.startsWith('/') && !next.startsWith('//') && isProtectedPath(next)) {
@@ -14,7 +16,7 @@ function redirectAfterAuth(next: string | null): string {
   return '/dashboard';
 }
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, loading, login } = useAuth();
@@ -50,7 +52,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
       <div className="w-full max-w-md">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl mb-4 shadow-lg shadow-indigo-900/50">
             <Wallet className="w-8 h-8 text-white" />
@@ -59,7 +60,6 @@ export default function LoginPage() {
           <p className="text-slate-500 mt-2">Zaloguj się do swojego konta</p>
         </div>
 
-        {/* Card */}
         <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700/60 p-8">
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
@@ -132,5 +132,21 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+function LoginFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-950">
+      <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginFallback />}>
+      <LoginForm />
+    </Suspense>
   );
 }
