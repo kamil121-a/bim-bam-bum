@@ -61,7 +61,11 @@ CREATE TABLE IF NOT EXISTS public.assets (
   name        TEXT        NOT NULL,
   value       NUMERIC(15, 2) NOT NULL DEFAULT 0 CHECK (value >= 0),
   category    TEXT        NOT NULL DEFAULT 'Inne'
-              CHECK (category IN ('Elektronika', 'Finanse', 'Nieruchomości', 'Inne')),
+              CHECK (category IN (
+                'Finanse', 'Akcje', 'Kruszce', 'Gotówka',
+                'Nieruchomości', 'Pojazdy', 'Elektronika',
+                'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'
+              )),
   reasoning   TEXT,
   created_at  TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );

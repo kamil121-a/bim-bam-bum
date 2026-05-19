@@ -1,6 +1,9 @@
 -- =============================================================================
--- Migration: Add new asset categories
--- Wklej w: Supabase Dashboard → SQL Editor → New query → Run
+-- Migracja kategorii aktywów (assets.category)
+--
+-- Uruchom w Supabase → SQL Editor. Jeśli po dodaniu nowej kategorii w aplikacji
+-- dostajesz: "violates check constraint assets_category_check" — uruchom TEN
+-- skrypt ponownie (albo plik supabase-fix-assets-category-check.sql).
 -- =============================================================================
 
 -- 1. Remove old category constraint
