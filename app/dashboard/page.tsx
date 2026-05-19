@@ -12,7 +12,7 @@ import { FINANCE_CATEGORIES } from '@/types';
 import {
   PlusCircle, TrendingUp,
   RefreshCw, ArrowUpDown, ChevronDown, ChevronRight,
-  Sparkles,
+  Sparkles, FlaskConical,
 } from 'lucide-react';
 
 import { fetchWithSupabaseAuth } from '@/lib/supabase';
@@ -23,6 +23,12 @@ export const dynamic = 'force-dynamic';
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
 const MILLION_PLN = 1_000_000;
+const FAST_TICKER_RE = /\.(US|PL)$/i;
+const MARKET_CATS_SET = new Set<AssetCategory>(['Finanse', 'Akcje', 'Kruszce']);
+
+function isFastRefreshableTicker(name: string): boolean {
+  return FAST_TICKER_RE.test(name.trim());
+}
 
 function AssetSkeleton() {
   return (
@@ -50,6 +56,10 @@ export default function DashboardPage() {
 
   // Other-category refresh
   const [refreshingOther, setRefreshingOther] = useState(false);
+
+  // Beta: fast refresh without AI
+  const [refreshingFastBeta, setRefreshingFastBeta] = useState(false);
+  const [fastBetaMsg, setFastBetaMsg]       = useState<string | null>(null);
 
   // Sort: 'value' = highest first, 'date' = newest first
   const [sortBy, setSortBy] = useState<'value' | 'date'>('value');
@@ -170,6 +180,115 @@ export default function DashboardPage() {
     }
   };
 
+  // ── Beta: szybkie odświeżenie bez AI (Yahoo / Stooq) ─────────────────────────
+  const handleRefreshFastBeta = async () => {
+    if (!supabase || !user) return;
+    setRefreshingFastBeta(true);
+    setFastBetaMsg(null);
+    try {
+      const targets = assets.filter(
+        a => MARKET_CATS_SET.has(a.category) && isFastRefreshableTicker(a.name),
+      );
+
+      if (targets.length === 0) {
+        setFastBetaMsg('Brak aktywów z tickerem .US lub .PL (kategorie giełdowe).');
+        setTimeout(() => setFastBetaMsg(null), 6000);
+        return;
+      }
+
+      const priced = await Promise.all(
+        targets.map(async (asset) => {
+          const ticker = asset.name.trim().toUpperCase();
+          const res = await fetchWithSupabaseAuth(supabase, '/api/valuate-fast', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+              ticker,
+              quantity: asset.quantity ?? 1,
+            }),
+          });
+          const data = (await res.json()) as {
+            success?: boolean;
+            unitPricePLN?: number;
+          };
+          if (!res.ok || !data.success || typeof data.unitPricePLN !== 'number') {
+            return { asset, ok: false as const };
+          }
+          const qty = asset.quantity ?? 1;
+          return {
+            asset,
+            ok:       true as const,
+            ticker,
+            newValue: Math.round(data.unitPricePLN * qty),
+          };
+        }),
+      );
+
+      let updated = 0;
+      let failed  = 0;
+      const updatedIds: string[] = [];
+
+      await Promise.all(
+        priced.map(async (row) => {
+          if (!row.ok) {
+            failed++;
+            return;
+          }
+          const { error } = await supabase
+            .from('assets')
+            .update({
+              value:     row.newValue,
+              reasoning: `Beta (bez AI): ${row.ticker}`,
+            })
+            .eq('id', row.asset.id)
+            .eq('user_id', user.id);
+
+          if (error) {
+            failed++;
+            return;
+          }
+          updated++;
+          updatedIds.push(row.asset.id);
+        }),
+      );
+
+      const { data: freshAssets } = await supabase
+        .from('assets')
+        .select('value')
+        .eq('user_id', user.id);
+
+      if (freshAssets) {
+        const totalWealth = freshAssets.reduce(
+          (sum, row) => sum + Number(row.value ?? 0),
+          0,
+        );
+        await supabase
+          .from('profiles')
+          .update({ total_wealth: totalWealth })
+          .eq('id', user.id);
+      }
+
+      await fetchAssets();
+      if (updatedIds.length > 0) {
+        setRefreshedIds(new Set(updatedIds));
+        setTimeout(() => setRefreshedIds(new Set()), 4_500);
+      }
+      router.refresh();
+
+      setFastBetaMsg(
+        failed > 0
+          ? `Beta: zaktualizowano ${updated} z ${targets.length} (reszta bez ceny lub błąd zapisu).`
+          : `Beta: zaktualizowano ${updated} aktywów (Yahoo / Stooq, bez AI).`,
+      );
+      setTimeout(() => setFastBetaMsg(null), 8_000);
+    } catch {
+      setFastBetaMsg('Błąd połączenia (Beta).');
+      setTimeout(() => setFastBetaMsg(null), 6_000);
+    } finally {
+      setRefreshingFastBeta(false);
+    }
+  };
+
   // ── Toggle collapse ───────────────────────────────────────────────────────────
   const toggleCollapse = (key: string) => {
     setCollapsed(prev => {
@@ -204,8 +323,10 @@ export default function DashboardPage() {
   }).filter(g => g.assets.length > 0);
 
   // For refresh button visibility
-  const MARKET_CATS = new Set<AssetCategory>(['Finanse', 'Akcje', 'Kruszce']);
-  const hasMarket = assets.some(a => MARKET_CATS.has(a.category));
+  const hasMarket = assets.some(a => MARKET_CATS_SET.has(a.category));
+  const hasFastBetaTargets = assets.some(
+    a => MARKET_CATS_SET.has(a.category) && isFastRefreshableTicker(a.name),
+  );
   const hasOther  = assets.some(a => !FINANCE_CATEGORIES.has(a.category));
 
   if (loading) {
@@ -472,6 +593,56 @@ export default function DashboardPage() {
               </Link>
             </div>
           </div>
+        )}
+
+        {/* ── Test: szybkie odświeżenie bez AI (izolowane od głównej ścieżki) ── */}
+        {!fetchLoading && (
+          <section
+            className="mt-12 pt-8 border-t border-dashed border-slate-700/80"
+            aria-label="Narzędzia testowe"
+          >
+            <div className="rounded-2xl border border-slate-700/60 bg-slate-900/50 p-5">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-9 h-9 rounded-lg bg-teal-500/15 flex items-center justify-center shrink-0">
+                  <FlaskConical className="w-4 h-4 text-teal-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-300">Ścieżka testowa</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    Równoległa wycena Yahoo (US) i Stooq (PL) — bez Tavily i OpenAI.
+                    Nie wpływa na przyciski „Odśwież Finanse” ani „Odśwież inne AI”.
+                  </p>
+                </div>
+              </div>
+
+              {fastBetaMsg && (
+                <p className="mb-3 text-xs text-teal-300/90 px-3 py-2 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                  {fastBetaMsg}
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRefreshFastBeta}
+                disabled={
+                  refreshingFastBeta ||
+                  refreshing ||
+                  refreshingOther ||
+                  !hasFastBetaTargets
+                }
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border border-teal-600/40 bg-teal-600/15 text-teal-300 hover:bg-teal-600/25 hover:border-teal-500/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshingFastBeta ? 'animate-spin' : ''}`} />
+                {refreshingFastBeta ? 'Wyceniam (Beta)…' : 'Odśwież bez AI (Beta)'}
+              </button>
+
+              {!hasFastBetaTargets && (
+                <p className="mt-2 text-xs text-slate-600">
+                  Dodaj aktywo z tickerem kończącym się na .US lub .PL (np. NVDA.US, PKN.PL).
+                </p>
+              )}
+            </div>
+          </section>
         )}
       </main>
     </>
