@@ -203,9 +203,8 @@ export default function StatsPage() {
                       return (
                         <div key={holder.userId}>
                           <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-                            <span className={`text-sm font-semibold ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
-                              Nick:{' '}
-                              <span className="font-mono text-slate-100">@{holder.username}</span>
+                            <span className={`text-sm font-semibold font-mono ${isMe ? 'text-indigo-300' : 'text-slate-100'}`}>
+                              @{holder.username}
                               {isMe && <span className="ml-1 text-xs text-indigo-500 font-normal">(Ty)</span>}
                             </span>
                             <div className="flex items-center gap-3 text-sm">
@@ -269,8 +268,8 @@ export default function StatsPage() {
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <span className="text-slate-500 font-mono text-xs w-8 shrink-0">#{row.rank}</span>
-                            <span className={`truncate font-semibold ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
-                              Nick: <span className="font-mono">@{row.username}</span>
+                            <span className={`truncate font-semibold font-mono ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                              @{row.username}
                               {isMe && <span className="text-xs text-indigo-500 ml-1 font-normal">(Ty)</span>}
                             </span>
                           </div>

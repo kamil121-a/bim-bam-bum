@@ -22,6 +22,7 @@ export const dynamic = 'force-dynamic';
 
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
+const MILLION_PLN = 1_000_000;
 
 function AssetSkeleton() {
   return (
@@ -180,6 +181,7 @@ export default function DashboardPage() {
 
   // ── Derived ───────────────────────────────────────────────────────────────────
   const totalValue = assets.reduce((sum, a) => sum + a.value, 0);
+  const pctOfMillion = MILLION_PLN > 0 ? (totalValue / MILLION_PLN) * 100 : 0;
 
   const sortedGroup = (list: Asset[]) =>
     [...list].sort((a, b) =>
@@ -272,20 +274,32 @@ export default function DashboardPage() {
         )}
 
         {/* ── Summary card (tylko majątek) ── */}
-        <div className="mb-8">
+        <div className="mb-8 space-y-3">
           <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-xl shadow-indigo-900/30 flex items-center gap-6">
             <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center shrink-0">
               <TrendingUp className="w-6 h-6" />
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-sm font-medium text-indigo-200">Łączny majątek</span>
               <p className="text-3xl font-bold mt-0.5">
                 {fetchLoading
                   ? <span className="inline-block w-40 h-9 bg-white/20 rounded-lg animate-pulse" />
                   : formatPLN(totalValue)}
               </p>
+              {!fetchLoading && (
+                <p className="text-lg font-semibold text-indigo-100 mt-1">
+                  {pctOfMillion.toLocaleString('pl-PL', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                  % miliona
+                </p>
+              )}
             </div>
           </div>
+          <p className="text-center text-sm italic text-slate-500 tracking-wide">
+            last one to touch a mil is a bitch
+          </p>
         </div>
 
         {/* ── Assets ── */}
