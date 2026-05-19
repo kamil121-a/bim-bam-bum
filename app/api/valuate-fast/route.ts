@@ -2,7 +2,7 @@
  * POST /api/valuate-fast
  *
  * Testowa, niezależna wycena bez OpenAI / Tavily.
- * Obsługuje wyłącznie tickery .US (Yahoo + NBP) oraz .PL (Stooq CSV).
+ * Yahoo + NBP (.US / bare US), Stooq (.PL / .WA), CoinGecko, NBP złoto/waluty, metals.live.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,6 +16,30 @@ const FETCH_OPTS: RequestInit = {
     Accept: '*/*',
   },
 };
+
+const CRYPTO_TICKER_TO_CG: Record<string, string> = {
+  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana',
+  XRP: 'ripple', ADA: 'cardano', DOGE: 'dogecoin',
+  BNB: 'binancecoin', LTC: 'litecoin', DOT: 'polkadot',
+  AVAX: 'avalanche-2', LINK: 'chainlink', TON: 'toncoin',
+  SHIB: 'shiba-inu', MATIC: 'polygon', UNI: 'uniswap',
+  ATOM: 'cosmos', XLM: 'stellar', NEAR: 'near',
+  PEPE: 'pepe', ARB: 'arbitrum', OP: 'optimism',
+  INJ: 'injective', BONK: 'bonk', XMR: 'monero',
+  TRX: 'tron', FIL: 'filecoin', AAVE: 'aave',
+};
+
+const METAL_TICKER_TO_SLUG: Record<string, string> = {
+  GOLD: 'gold', XAU: 'gold',
+  SILVER: 'silver', XAG: 'silver',
+  PLATINUM: 'platinum', XPT: 'platinum',
+  PALLADIUM: 'palladium', XPD: 'palladium',
+  COPPER: 'copper', XCU: 'copper',
+};
+
+const CASH_CURRENCIES = new Set(['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'CZK', 'NOK', 'SEK', 'DKK', 'JPY', 'CAD', 'AUD']);
+
+type FastMarket = 'us' | 'gpw' | 'crypto' | 'metal_gold' | 'metal_spot' | 'cash';
 
 function fail(): NextResponse {
   return NextResponse.json({ success: false });
@@ -31,11 +55,47 @@ function ok(unitPricePLN: number): NextResponse {
   });
 }
 
-async function fetchNbpUsdPln(): Promise<number | null> {
+function parseFastTicker(raw: string): { market: FastMarket; apiId: string } | null {
+  const t = raw.trim().toUpperCase();
+  if (!t) return null;
+
+  if (t === 'PLN' || CASH_CURRENCIES.has(t)) {
+    return { market: 'cash', apiId: t };
+  }
+
+  const metalSlug = METAL_TICKER_TO_SLUG[t];
+  if (metalSlug) {
+    return metalSlug === 'gold'
+      ? { market: 'metal_gold', apiId: metalSlug }
+      : { market: 'metal_spot', apiId: metalSlug };
+  }
+
+  const cgId = CRYPTO_TICKER_TO_CG[t];
+  if (cgId) return { market: 'crypto', apiId: cgId };
+
+  if (t.endsWith('.PL') || t.endsWith('.WA')) {
+    return { market: 'gpw', apiId: t.replace(/\.(PL|WA)$/i, '').toLowerCase() };
+  }
+
+  if (t.endsWith('.US')) {
+    return { market: 'us', apiId: t.slice(0, -3) };
+  }
+
+  // Bare symbol — Yahoo (US / global)
+  if (/^[A-Z0-9.\-]{1,12}$/.test(t)) {
+    return { market: 'us', apiId: t };
+  }
+
+  return null;
+}
+
+async function fetchNbpRate(currency: string): Promise<number | null> {
+  const code = currency.toLowerCase();
+  if (code === 'pln') return 1;
   try {
     const res = await fetch(
-      'https://api.nbp.pl/api/exchangerates/rates/a/usd/?format=json',
-      { ...FETCH_OPTS, signal: AbortSignal.timeout(8_000) },
+      `https://api.nbp.pl/api/exchangerates/rates/a/${encodeURIComponent(code)}/?format=json`,
+      { ...FETCH_OPTS, signal: AbortSignal.timeout(8_000), headers: { Accept: 'application/json' } },
     );
     if (!res.ok) return null;
     const json = (await res.json()) as { rates?: { mid?: number }[] };
@@ -44,6 +104,10 @@ async function fetchNbpUsdPln(): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+async function fetchNbpUsdPln(): Promise<number | null> {
+  return fetchNbpRate('usd');
 }
 
 async function fetchYahooUsdPrice(symbol: string): Promise<number | null> {
@@ -63,19 +127,16 @@ async function fetchYahooUsdPrice(symbol: string): Promise<number | null> {
   }
 }
 
-async function fetchStooqPlPrice(ticker: string): Promise<number | null> {
-  const symbol = ticker.replace(/\.PL$/i, '').toLowerCase();
-  if (!symbol) return null;
+async function fetchStooqPln(symbol: string): Promise<number | null> {
+  const sym = symbol.toLowerCase();
+  if (!sym) return null;
 
   try {
-    const url = `https://stooq.pl/q/l/?s=${encodeURIComponent(symbol)}&f=sd2t2opc1&e=csv`;
+    const url = `https://stooq.pl/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2opc1&e=csv`;
     const res = await fetch(url, {
       ...FETCH_OPTS,
       signal: AbortSignal.timeout(8_000),
-      headers: {
-        ...FETCH_OPTS.headers,
-        Accept: 'text/csv,text/plain,*/*',
-      },
+      headers: { ...FETCH_OPTS.headers, Accept: 'text/csv,text/plain,*/*' },
     });
     if (!res.ok) return null;
 
@@ -91,6 +152,100 @@ async function fetchStooqPlPrice(ticker: string): Promise<number | null> {
     return Number.isFinite(price) && price > 0 ? price : null;
   } catch {
     return null;
+  }
+}
+
+async function fetchGoldPlnPerGram(): Promise<number | null> {
+  try {
+    const res = await fetch('https://api.nbp.pl/api/cenyzlota/?format=json', {
+      ...FETCH_OPTS,
+      signal: AbortSignal.timeout(8_000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<{ cena?: number }>;
+    const price = data[0]?.cena;
+    return typeof price === 'number' && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchMetalUsd(slug: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://api.metals.live/v1/spot/${slug}`, {
+      ...FETCH_OPTS,
+      signal: AbortSignal.timeout(8_000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const raw = await res.json();
+    let price: unknown;
+    if (typeof raw === 'number') {
+      price = raw;
+    } else if (Array.isArray(raw) && raw.length > 0) {
+      price = raw[0][slug] ?? raw[0].price ?? raw[0].rate;
+    } else if (raw && typeof raw === 'object') {
+      const o = raw as Record<string, unknown>;
+      price = o[slug] ?? o.price ?? o.rate;
+    }
+    return typeof price === 'number' && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCryptoPln(coingeckoId: string): Promise<number | null> {
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coingeckoId)}&vs_currencies=pln&precision=2`;
+    const res = await fetch(url, {
+      ...FETCH_OPTS,
+      signal: AbortSignal.timeout(8_000),
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, { pln?: number }>;
+    const price = data[coingeckoId]?.pln;
+    return typeof price === 'number' && price > 0 ? price : null;
+  } catch {
+    return null;
+  }
+}
+
+async function priceByMarket(parsed: { market: FastMarket; apiId: string }): Promise<number | null> {
+  switch (parsed.market) {
+    case 'cash':
+      return fetchNbpRate(parsed.apiId);
+
+    case 'metal_gold':
+      return fetchGoldPlnPerGram();
+
+    case 'metal_spot': {
+      const [spotUsd, usdPln] = await Promise.all([
+        fetchMetalUsd(parsed.apiId),
+        fetchNbpUsdPln(),
+      ]);
+      if (spotUsd == null || usdPln == null) return null;
+      return spotUsd * usdPln;
+    }
+
+    case 'crypto':
+      return fetchCryptoPln(parsed.apiId);
+
+    case 'gpw':
+      return fetchStooqPln(parsed.apiId);
+
+    case 'us': {
+      const [usdPrice, usdPln] = await Promise.all([
+        fetchYahooUsdPrice(parsed.apiId),
+        fetchNbpUsdPln(),
+      ]);
+      if (usdPrice == null || usdPln == null) return null;
+      return usdPrice * usdPln;
+    }
+
+    default:
+      return null;
   }
 }
 
@@ -112,29 +267,25 @@ export async function POST(request: NextRequest) {
     typeof body.ticker === 'string' ? body.ticker.trim().toUpperCase() : '';
   const quantity =
     typeof body.quantity === 'number' && body.quantity > 0 ? body.quantity : 1;
+  const category = typeof body.category === 'string' ? body.category : '';
 
   if (!ticker || quantity <= 0) {
     return fail();
   }
 
-  if (ticker.endsWith('.US')) {
-    const yahooSymbol = ticker.slice(0, -3);
-    if (!yahooSymbol) return fail();
-
-    const [usdPrice, usdPln] = await Promise.all([
-      fetchYahooUsdPrice(yahooSymbol),
-      fetchNbpUsdPln(),
-    ]);
-
-    if (usdPrice == null || usdPln == null) return fail();
-    return ok(usdPrice * usdPln);
+  // Gotówka: nazwa aktywa to kod waluty (USD, EUR…)
+  if (category === 'Gotówka') {
+    const currency = ticker.length === 3 ? ticker : ticker.split(/\s+/)[0]?.slice(0, 3) ?? ticker;
+    const rate = await fetchNbpRate(currency);
+    if (rate == null) return fail();
+    return ok(rate);
   }
 
-  if (ticker.endsWith('.PL')) {
-    const plnPrice = await fetchStooqPlPrice(ticker);
-    if (plnPrice == null) return fail();
-    return ok(plnPrice);
-  }
+  const parsed = parseFastTicker(ticker);
+  if (!parsed) return fail();
 
-  return fail();
+  const unitPrice = await priceByMarket(parsed);
+  if (unitPrice == null) return fail();
+
+  return ok(unitPrice);
 }

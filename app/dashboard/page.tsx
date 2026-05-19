@@ -23,11 +23,18 @@ export const dynamic = 'force-dynamic';
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
 const MILLION_PLN = 1_000_000;
-const FAST_TICKER_RE = /\.(US|PL)$/i;
 const MARKET_CATS_SET = new Set<AssetCategory>(['Finanse', 'Akcje', 'Kruszce']);
+const OTHER_REFRESH_CATS: AssetCategory[] = [
+  'Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne',
+];
 
-function isFastRefreshableTicker(name: string): boolean {
-  return FAST_TICKER_RE.test(name.trim());
+/** Aktywa wyceniane w ścieżce Beta (giełda, krypto, metale, gotówka). */
+function isFastBetaMarketAsset(asset: Asset): boolean {
+  return MARKET_CATS_SET.has(asset.category) || asset.category === 'Gotówka';
+}
+
+function isFastBetaOtherAsset(asset: Asset): boolean {
+  return OTHER_REFRESH_CATS.includes(asset.category);
 }
 
 function AssetSkeleton() {
@@ -180,53 +187,62 @@ export default function DashboardPage() {
     }
   };
 
-  // ── Beta: szybkie odświeżenie bez AI (Yahoo / Stooq) ─────────────────────────
+  // ── Beta: szybkie odświeżenie (giełda bez AI + pozostałe kategorie opisowe) ──
   const handleRefreshFastBeta = async () => {
     if (!supabase || !user) return;
     setRefreshingFastBeta(true);
     setFastBetaMsg(null);
     try {
-      const targets = assets.filter(
-        a => MARKET_CATS_SET.has(a.category) && isFastRefreshableTicker(a.name),
-      );
+      const marketTargets = assets.filter(isFastBetaMarketAsset);
+      const otherTargets  = assets.filter(isFastBetaOtherAsset);
 
-      if (targets.length === 0) {
-        setFastBetaMsg('Brak aktywów z tickerem .US lub .PL (kategorie giełdowe).');
+      if (marketTargets.length === 0 && otherTargets.length === 0) {
+        setFastBetaMsg('Brak aktywów do odświeżenia.');
         setTimeout(() => setFastBetaMsg(null), 6000);
         return;
       }
 
-      const priced = await Promise.all(
-        targets.map(async (asset) => {
-          const ticker = asset.name.trim().toUpperCase();
-          const res = await fetchWithSupabaseAuth(supabase, '/api/valuate-fast', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-              ticker,
-              quantity: asset.quantity ?? 1,
-            }),
-          });
-          const data = (await res.json()) as {
-            success?: boolean;
-            unitPricePLN?: number;
-          };
-          if (!res.ok || !data.success || typeof data.unitPricePLN !== 'number') {
-            return { asset, ok: false as const };
-          }
-          const qty = asset.quantity ?? 1;
-          return {
-            asset,
-            ok:       true as const,
-            ticker,
-            newValue: Math.round(data.unitPricePLN * qty),
-          };
-        }),
-      );
-
       let updated = 0;
       let failed  = 0;
       const updatedIds: string[] = [];
+
+      const [priced, otherRefreshRes] = await Promise.all([
+        Promise.all(
+          marketTargets.map(async (asset) => {
+            const ticker = asset.name.trim().toUpperCase();
+            const res = await fetchWithSupabaseAuth(supabase, '/api/valuate-fast', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({
+                ticker,
+                quantity: asset.quantity ?? 1,
+                category: asset.category,
+              }),
+            });
+            const data = (await res.json()) as {
+              success?: boolean;
+              unitPricePLN?: number;
+            };
+            if (!res.ok || !data.success || typeof data.unitPricePLN !== 'number') {
+              return { asset, ok: false as const };
+            }
+            const qty = asset.quantity ?? 1;
+            return {
+              asset,
+              ok:       true as const,
+              ticker,
+              newValue: Math.round(data.unitPricePLN * qty),
+            };
+          }),
+        ),
+        otherTargets.length > 0
+          ? fetchWithSupabaseAuth(supabase, '/api/assets/refresh', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ type: 'other' }),
+            })
+          : Promise.resolve(null),
+      ]);
 
       await Promise.all(
         priced.map(async (row) => {
@@ -252,6 +268,25 @@ export default function DashboardPage() {
         }),
       );
 
+      let otherUpdated = 0;
+      if (otherRefreshRes) {
+        const data = await otherRefreshRes.json() as {
+          updated?: number;
+          failed?: number;
+          updatedIds?: string[];
+          assets?: Asset[];
+        };
+        if (otherRefreshRes.ok) {
+          otherUpdated = data.updated ?? 0;
+          failed += data.failed ?? 0;
+          updated += otherUpdated;
+          data.updatedIds?.forEach(id => updatedIds.push(id));
+          if (data.assets) setAssets(data.assets);
+        } else {
+          failed += otherTargets.length;
+        }
+      }
+
       const { data: freshAssets } = await supabase
         .from('assets')
         .select('value')
@@ -275,10 +310,12 @@ export default function DashboardPage() {
       }
       router.refresh();
 
+      const marketOk = updated - otherUpdated;
+      const totalTargets = marketTargets.length + otherTargets.length;
       setFastBetaMsg(
         failed > 0
-          ? `Beta: zaktualizowano ${updated} z ${targets.length} (reszta bez ceny lub błąd zapisu).`
-          : `Beta: zaktualizowano ${updated} aktywów (Yahoo / Stooq, bez AI).`,
+          ? `Beta: ${marketOk}/${marketTargets.length} giełda · ${otherUpdated}/${otherTargets.length} pozostałe (${failed} błędów).`
+          : `Beta: zaktualizowano ${updated}/${totalTargets} (giełda bez AI + pozostałe opisowe).`,
       );
       setTimeout(() => setFastBetaMsg(null), 8_000);
     } catch {
@@ -325,7 +362,7 @@ export default function DashboardPage() {
   // For refresh button visibility
   const hasMarket = assets.some(a => MARKET_CATS_SET.has(a.category));
   const hasFastBetaTargets = assets.some(
-    a => MARKET_CATS_SET.has(a.category) && isFastRefreshableTicker(a.name),
+    a => isFastBetaMarketAsset(a) || isFastBetaOtherAsset(a),
   );
   const hasOther  = assets.some(a => !FINANCE_CATEGORIES.has(a.category));
 
@@ -609,8 +646,8 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="text-sm font-semibold text-slate-300">Ścieżka testowa</h3>
                   <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                    Równoległa wycena Yahoo (US) i Stooq (PL) — bez Tavily i OpenAI.
-                    Nie wpływa na przyciski „Odśwież Finanse” ani „Odśwież inne AI”.
+                    Zbiorczo: giełda (.US, .PL, krypto, metale, gotówka) bez AI oraz pozostałe kategorie opisowe.
+                    Nie zastępuje osobnych przycisków „Odśwież Finanse” / „Odśwież inne AI”.
                   </p>
                 </div>
               </div>
@@ -638,7 +675,7 @@ export default function DashboardPage() {
 
               {!hasFastBetaTargets && (
                 <p className="mt-2 text-xs text-slate-600">
-                  Dodaj aktywo z tickerem kończącym się na .US lub .PL (np. NVDA.US, PKN.PL).
+                  Dodaj aktywa do portfela, aby użyć zbiorczego odświeżania.
                 </p>
               )}
             </div>
