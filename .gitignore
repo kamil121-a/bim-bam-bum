@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local mock database (contains user data)
 /data/db.json
+
+# lokalne kopie użytkowników (npm run backup:users)
+/backups/

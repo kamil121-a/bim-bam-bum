@@ -24,12 +24,15 @@ export default function RegisterPage() {
     e.preventDefault();
     setError('');
     setSubmitting(true);
-    const result = await register(username, email, password);
-    if (result.error) {
-      setError(result.error);
+    try {
+      const result = await register(username, email, password);
+      if (result.error) {
+        setError(result.error);
+      } else {
+        router.push('/dashboard');
+      }
+    } finally {
       setSubmitting(false);
-    } else {
-      router.push('/dashboard');
     }
   };
 

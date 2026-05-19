@@ -23,13 +23,14 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setSubmitting(true);
-    const result = await login(email, password);
-    if (result.error) {
-      setError(result.error);
+    try {
+      const result = await login(email, password);
+      if (result.error) {
+        setError(result.error);
+      }
+      // Nawigacja na /dashboard: istniejący useEffect (!loading && user), gdy login() ustawi user
+    } finally {
       setSubmitting(false);
-    } else {
-      // replace() removes /login from history so Back button can't loop back
-      router.replace('/dashboard');
     }
   };
 

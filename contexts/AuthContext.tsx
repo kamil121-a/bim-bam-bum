@@ -71,10 +71,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const { data: { user: u } } = await supabase.auth.getUser();
-    if (u) {
+    try {
+      const res = await Promise.race([
+        supabase.auth.getUser(),
+        new Promise<Awaited<ReturnType<typeof supabase.auth.getUser>>>((_, reject) =>
+          setTimeout(() => reject(new Error('refresh-timeout')), 15_000),
+        ),
+      ]);
+      const { data: { user: u }, error } = res;
+      if (error || !u) {
+        setUser(null);
+        return;
+      }
       setUser(await fetchProfile(supabase, u.id, u.email!));
-    } else {
+    } catch (e) {
+      if (e instanceof Error && e.message === 'refresh-timeout') {
+        console.warn('[auth] refresh: getUser timeout');
+        return;
+      }
+      console.warn('[auth] refresh error:', e);
       setUser(null);
     }
   }, [supabase]);
@@ -192,11 +207,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
-          // For a fresh SIGNED_IN (login form submit), hold loading=true until
-          // profile is ready – prevents the dashboard from briefly seeing null user
-          // and redirecting to /login. For TOKEN_REFRESHED, user is already shown
-          // so we update silently without touching the loading flag.
-          if (event === 'SIGNED_IN' && mounted) setLoading(true);
+          // Nie ustawiamy loading=true przy SIGNED_IN — login() już wypełnia user przed nawigacją;
+          // loading=true tutaj blokował dashboard (loading || !user) na czas drugiego fetchProfile.
           try {
             const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
             if (mounted) setUser(profile);
@@ -233,6 +245,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: translateAuthError(error.message) };
+
+    // Natychmiastowa sesja + profil w stanie — zanim zadziała router, dashboard musi widzieć user
+    // (inaczej: !user && !loading → redirect na /login lub wieczny spinner).
+    const sessionResult = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<{ data: { session: null } }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null } }), 12_000),
+      ),
+    ]);
+
+    const session = sessionResult.data.session;
+    if (!session?.user) {
+      return {
+        error:
+          'Nie udało się nawiązać sesji (timeout lub brak danych). Sprawdź połączenie i spróbuj ponownie.',
+      };
+    }
+
+    const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
+    setUser(profile);
     return {};
   };
 
