@@ -2,7 +2,7 @@
  * POST /api/valuate-fast
  *
  * Testowa, niezależna wycena bez OpenAI / Tavily.
- * Yahoo + NBP (.US / bare US), Stooq (.PL / .WA), CoinGecko, NBP złoto/waluty, metals.live.
+ * Yahoo + NBP (.US, .UK, .DE, bare US), Stooq (.PL / .WA), CoinGecko, NBP złoto/waluty, metals.live.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -39,7 +39,12 @@ const METAL_TICKER_TO_SLUG: Record<string, string> = {
 
 const CASH_CURRENCIES = new Set(['PLN', 'USD', 'EUR', 'GBP', 'CHF', 'CZK', 'NOK', 'SEK', 'DKK', 'JPY', 'CAD', 'AUD']);
 
-type FastMarket = 'us' | 'gpw' | 'crypto' | 'metal_gold' | 'metal_spot' | 'cash';
+type FastMarket = 'yahoo' | 'gpw' | 'crypto' | 'metal_gold' | 'metal_spot' | 'cash';
+
+interface YahooQuote {
+  price: number;
+  currency: string;
+}
 
 function fail(): NextResponse {
   return NextResponse.json({ success: false });
@@ -77,13 +82,26 @@ function parseFastTicker(raw: string): { market: FastMarket; apiId: string } | n
     return { market: 'gpw', apiId: t.replace(/\.(PL|WA)$/i, '').toLowerCase() };
   }
 
+  // UK (XTB .UK) → Yahoo LSE: IWDA.UK → IWDA.L
+  if (t.endsWith('.UK')) {
+    const base = t.slice(0, -3);
+    return base ? { market: 'yahoo', apiId: `${base}.L` } : null;
+  }
+
+  // Niemcy (XTB .DE) → Yahoo Xetra: SAP.DE
+  if (t.endsWith('.DE')) {
+    const base = t.slice(0, -3);
+    return base ? { market: 'yahoo', apiId: `${base}.DE` } : null;
+  }
+
   if (t.endsWith('.US')) {
-    return { market: 'us', apiId: t.slice(0, -3) };
+    const base = t.slice(0, -3);
+    return base ? { market: 'yahoo', apiId: base } : null;
   }
 
   // Bare symbol — Yahoo (US / global)
   if (/^[A-Z0-9.\-]{1,12}$/.test(t)) {
-    return { market: 'us', apiId: t };
+    return { market: 'yahoo', apiId: t };
   }
 
   return null;
@@ -110,21 +128,97 @@ async function fetchNbpUsdPln(): Promise<number | null> {
   return fetchNbpRate('usd');
 }
 
-async function fetchYahooUsdPrice(symbol: string): Promise<number | null> {
+/** GBp/GBX = pensy; GBP = funty. */
+function normalizeYahooMoney(quote: YahooQuote): { amount: number; nbpCurrency: string } | null {
+  const rawCur = (quote.currency || 'USD').trim();
+  const upper = rawCur.toUpperCase();
+  let amount = quote.price;
+  let nbpCurrency: string;
+
+  if (upper === 'PLN') {
+    return { amount, nbpCurrency: 'pln' };
+  }
+  if (rawCur === 'GBp' || upper === 'GBX') {
+    amount = amount / 100;
+    nbpCurrency = 'gbp';
+  } else if (upper === 'GBP') {
+    nbpCurrency = 'gbp';
+  } else if (upper === 'EUR') {
+    nbpCurrency = 'eur';
+  } else if (upper === 'USD') {
+    nbpCurrency = 'usd';
+  } else if (upper === 'CHF') {
+    nbpCurrency = 'chf';
+  } else {
+    nbpCurrency = 'usd';
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return { amount, nbpCurrency };
+}
+
+async function fetchYahooQuote(yahooSymbol: string): Promise<YahooQuote | null> {
   try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
-      { ...FETCH_OPTS, signal: AbortSignal.timeout(8_000) },
-    );
+    const url =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}` +
+      '?interval=1d&range=5d';
+    const res = await fetch(url, { ...FETCH_OPTS, signal: AbortSignal.timeout(8_000) });
     if (!res.ok) return null;
+
     const json = (await res.json()) as {
-      chart?: { result?: { meta?: { regularMarketPrice?: number } }[] };
+      chart?: {
+        error?: unknown;
+        result?: {
+          meta?: {
+            currency?: string | null;
+            regularMarketPrice?: number;
+            chartPreviousClose?: number;
+            previousClose?: number;
+          };
+          indicators?: { quote?: Array<{ close?: (number | null)[] }> };
+        }[];
+      };
     };
-    const price = json.chart?.result?.[0]?.meta?.regularMarketPrice;
-    return typeof price === 'number' && price > 0 ? price : null;
+
+    if (json.chart?.error) return null;
+    const result = json.chart?.result?.[0];
+    const meta = result?.meta;
+    if (!meta) return null;
+
+    let price = meta.regularMarketPrice;
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+      price = meta.chartPreviousClose;
+    }
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+      price = meta.previousClose;
+    }
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+      const closes = result.indicators?.quote?.[0]?.close?.filter(
+        (x): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0,
+      );
+      if (closes?.length) price = closes[closes.length - 1]!;
+    }
+
+    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null;
+
+    const currency = (meta.currency ?? 'USD').trim();
+    return { price, currency: currency || 'USD' };
   } catch {
     return null;
   }
+}
+
+async function fetchYahooPricePln(yahooSymbol: string): Promise<number | null> {
+  const quote = await fetchYahooQuote(yahooSymbol);
+  if (!quote) return null;
+
+  const normalized = normalizeYahooMoney(quote);
+  if (!normalized) return null;
+
+  const rate = await fetchNbpRate(normalized.nbpCurrency);
+  if (rate == null) return null;
+
+  return normalized.amount * rate;
 }
 
 async function fetchStooqPln(symbol: string): Promise<number | null> {
@@ -235,14 +329,8 @@ async function priceByMarket(parsed: { market: FastMarket; apiId: string }): Pro
     case 'gpw':
       return fetchStooqPln(parsed.apiId);
 
-    case 'us': {
-      const [usdPrice, usdPln] = await Promise.all([
-        fetchYahooUsdPrice(parsed.apiId),
-        fetchNbpUsdPln(),
-      ]);
-      if (usdPrice == null || usdPln == null) return null;
-      return usdPrice * usdPln;
-    }
+    case 'yahoo':
+      return fetchYahooPricePln(parsed.apiId);
 
     default:
       return null;

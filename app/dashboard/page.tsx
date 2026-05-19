@@ -646,7 +646,7 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="text-sm font-semibold text-slate-300">Ścieżka testowa</h3>
                   <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                    Zbiorczo: giełda (.US, .PL, krypto, metale, gotówka) bez AI oraz pozostałe kategorie opisowe.
+                    Zbiorczo: giełda (.US, .PL, .UK, .DE, krypto, metale, gotówka) bez AI oraz pozostałe kategorie opisowe.
                     Nie zastępuje osobnych przycisków „Odśwież Finanse” / „Odśwież inne AI”.
                   </p>
                 </div>
