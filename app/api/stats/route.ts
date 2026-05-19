@@ -12,6 +12,63 @@ import { ASSET_CATEGORIES } from '@/types';
 /** Gotówka: pole `name` = kod waluty (PLN, USD, EUR, DKK). */
 const KNOWN_CASH_CODES = new Set(['PLN', 'USD', 'EUR', 'DKK']);
 
+function normalizeNick(raw: string | null | undefined): string | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  return s.length > 0 ? s : null;
+}
+
+async function enrichMissingUsernames(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  profileMap: Record<string, { username: string; total_wealth: number }>,
+  candidateIds: Iterable<string>,
+): Promise<void> {
+  const toResolve = [...new Set(candidateIds)].filter(id => {
+    const row = profileMap[id];
+    return !row || !normalizeNick(row.username);
+  });
+
+  await Promise.all(
+    toResolve.map(async uid => {
+      try {
+        const { data, error } = await admin.auth.admin.getUserById(uid);
+        if (error || !data?.user) {
+          console.warn('[stats] Brak użytkownika Auth dla', uid, error?.message);
+          return;
+        }
+        const u      = data.user;
+        const meta   = u.user_metadata as Record<string, unknown> | undefined;
+        const metaUser =
+          typeof meta?.username === 'string' ? normalizeNick(meta.username) : null;
+        const emailLocal =
+          typeof u.email === 'string' && u.email.includes('@')
+            ? normalizeNick(u.email.split('@')[0])
+            : null;
+
+        const resolved = metaUser ?? emailLocal ?? `użytkownik_${uid.slice(0, 8)}`;
+
+        const prev = profileMap[uid];
+        profileMap[uid] = {
+          username:     resolved,
+          total_wealth: prev?.total_wealth ?? 0,
+        };
+      } catch (e) {
+        console.warn('[stats] getUserById error', uid, e);
+      }
+    }),
+  );
+
+  // Ostateczny fallback – żeby UI nigdy nie dostało pustego nicku
+  for (const uid of toResolve) {
+    const row = profileMap[uid];
+    if (!row || !normalizeNick(row.username)) {
+      profileMap[uid] = {
+        username:     `użytkownik_${uid.slice(0, 8)}`,
+        total_wealth: row?.total_wealth ?? 0,
+      };
+    }
+  }
+}
+
 export async function GET(request: NextRequest) {
   const supabase = createSupabaseServerClient(request);
   const { data: { user }, error: authErr } = await supabase.auth.getUser();
@@ -33,31 +90,66 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Błąd pobierania aktywów.' }, { status: 500 });
   }
 
-  const profileMap = Object.fromEntries(
-    (profiles ?? []).map(p => [p.id, { username: p.username, total_wealth: p.total_wealth }]),
-  );
+  const assetList = assets ?? [];
 
-  // ── Category breakdown per user (wartości w PLN – do rankingu kategorii i tabeli) ──
+  // ── Najpierw agregacja wg kategorii (potrzebna też do majątku bez profiles.total_wealth) ──
   const categoryBreakdown: Record<string, Record<string, number>> = {};
-  for (const asset of assets ?? []) {
+  for (const asset of assetList) {
     const uid = asset.user_id;
     if (!categoryBreakdown[uid]) categoryBreakdown[uid] = {};
     categoryBreakdown[uid][asset.category] =
       (categoryBreakdown[uid][asset.category] ?? 0) + Number(asset.value);
   }
 
-  const users = (profiles ?? []).map(p => ({
-    id:           p.id,
-    username:     p.username,
-    total_wealth: p.total_wealth ?? 0,
-    categories:   categoryBreakdown[p.id] ?? {},
+  const sumWealthFromCategories = (uid: string) =>
+    Object.values(categoryBreakdown[uid] ?? {}).reduce((s, v) => s + v, 0);
+
+  const assetUserIds = new Set(assetList.map(a => a.user_id));
+
+  const profileMap: Record<string, { username: string; total_wealth: number }> = {};
+  for (const p of profiles ?? []) {
+    const nick = normalizeNick(p.username) ?? '';
+    profileMap[p.id] = {
+      username:     nick,
+      total_wealth: p.total_wealth ?? 0,
+    };
+  }
+
+  await enrichMissingUsernames(admin, profileMap, [
+    ...assetUserIds,
+    ...(profiles ?? []).map(p => p.id),
+  ]);
+
+  for (const uid of assetUserIds) {
+    if (!profileMap[uid]) {
+      profileMap[uid] = { username: '', total_wealth: 0 };
+    }
+  }
+  await enrichMissingUsernames(admin, profileMap, assetUserIds);
+
+  const displayName = (uid: string) =>
+    normalizeNick(profileMap[uid]?.username) ?? `użytkownik_${uid.slice(0, 8)}`;
+
+  const allParticipantIds = new Set<string>([
+    ...(profiles ?? []).map(p => p.id),
+    ...assetUserIds,
+  ]);
+
+  const users = [...allParticipantIds].map(id => ({
+    id,
+    username:     displayName(id),
+    total_wealth:
+      profileMap[id]?.total_wealth && Number(profileMap[id].total_wealth) > 0
+        ? Number(profileMap[id].total_wealth)
+        : sumWealthFromCategories(id),
+    categories: categoryBreakdown[id] ?? {},
   }));
 
   // ── Gotówka: jedna struktura – tylko ilość w walucie pierwotnej (bez PLN w UI) ──
   type CashAgg = Record<string, Record<string, number>>;
   const cashQtyByCurrency: CashAgg = {};
 
-  for (const asset of assets ?? []) {
+  for (const asset of assetList) {
     if (asset.category !== 'Gotówka') continue;
     const code = (asset.name ?? '').trim().toUpperCase();
     if (!KNOWN_CASH_CODES.has(code)) continue;
@@ -74,7 +166,7 @@ export async function GET(request: NextRequest) {
         .map(([userId, quantity]) => ({
           rank:     0,
           userId,
-          username: profileMap[userId]?.username ?? '?',
+          username: displayName(userId),
           quantity,
         }))
         .sort((a, b) => b.quantity - a.quantity)
@@ -85,12 +177,12 @@ export async function GET(request: NextRequest) {
 
   // ── Pełny ranking wg kategorii (wartość w PLN w danej kategorii) ──
   const categoryRankings = ASSET_CATEGORIES.map(cat => {
-    const rankings = (profiles ?? [])
-      .map(p => ({
+    const rankings = [...allParticipantIds]
+      .map(id => ({
         rank:     0,
-        userId:   p.id,
-        username: p.username,
-        totalPln: categoryBreakdown[p.id]?.[cat] ?? 0,
+        userId:   id,
+        username: displayName(id),
+        totalPln: categoryBreakdown[id]?.[cat] ?? 0,
       }))
       .filter(r => r.totalPln > 0)
       .sort((a, b) => b.totalPln - a.totalPln)
@@ -101,13 +193,13 @@ export async function GET(request: NextRequest) {
   // ── Wspólne aktywa ──────────────────────────────────────────────────────────
   const byName: Record<string, { userId: string; username: string; value: number; quantity: number; category: string }[]> = {};
 
-  for (const asset of assets ?? []) {
+  for (const asset of assetList) {
     const key = ((asset.original_name ?? asset.name) || '').trim().toUpperCase();
     if (!key) continue;
     if (!byName[key]) byName[key] = [];
     byName[key].push({
       userId:   asset.user_id,
-      username: profileMap[asset.user_id]?.username ?? '?',
+      username: displayName(asset.user_id),
       value:    Number(asset.value),
       quantity: Number(asset.quantity) || 1,
       category: asset.category,
