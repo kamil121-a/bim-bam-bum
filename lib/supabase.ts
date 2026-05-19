@@ -1,53 +1,26 @@
-import {
-  createBrowserClient,
-  createServerClient as createSSRServerClient,
-} from '@supabase/ssr';
+import { createServerClient as createSSRServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { NextRequest } from 'next/server';
-import { getSupabaseSessionCookieName } from '@/lib/supabase-session-storage-key';
+
+export { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-const SESSION_COOKIE = { name: getSupabaseSessionCookieName() };
-
-/**
- * Browser client – use in Client Components and AuthContext.
- * Safe to call multiple times; returns a stable singleton per tab.
- *
- * detectSessionInUrl: false  – prevents the client from parsing session tokens
- *   out of URL hash fragments (happens after OAuth). Without this flag, a stale
- *   or malformed URL can corrupt the stored session and cause an auth loop.
- *
- * cookieOptions.name — ten sam prefiks co middleware i Route Handlers; wersja `-v2`
- * odcina stare uszkodzone ciasteczka po zmianach auth.
- */
-export function createSupabaseBrowserClient() {
-  return createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookieOptions: SESSION_COOKIE,
-    auth: {
-      detectSessionInUrl: false,
-      persistSession:     true,
-      autoRefreshToken:   true,
-    },
-  });
-}
 
 /**
  * Server client for Route Handlers (API routes).
  * Reads the user session from request cookies.
  * Call `supabase.auth.getUser()` to validate the session.
  */
+/** Serwer API — sesja z ciasteczek (opcjonalnie) lub Bearer z klienta. */
 export function createSupabaseServerClient(request: NextRequest) {
   return createSSRServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookieOptions: SESSION_COOKIE,
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
-      // Zapisy obsługuje middleware — tutaj tylko odczyt żądania.
       setAll() {},
     },
   });
@@ -104,11 +77,22 @@ export async function fetchWithSupabaseAuth(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const headers = new Headers(init?.headers);
-  if (session?.access_token) {
-    headers.set('Authorization', `Bearer ${session.access_token}`);
+  let token: string | undefined;
+  try {
+    const raced = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+    ]);
+    if (raced && typeof raced === 'object' && 'data' in raced) {
+      token = raced.data.session?.access_token;
+    }
+  } catch {
+    /* brak tokena — API zwróci 401 */
   }
+
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
   return fetch(input, {
     ...init,
     credentials: 'same-origin',

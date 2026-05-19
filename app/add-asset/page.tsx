@@ -21,9 +21,8 @@ import {
   FileText,
   Banknote,
 } from 'lucide-react';
-import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
-
-const supabase = createSupabaseBrowserClient();
+import { fetchWithSupabaseAuth } from '@/lib/supabase';
+import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -96,6 +95,7 @@ const CASH_CURRENCIES: Array<{ code: string; name: string; flag: string }> = [
 export default function AddAssetPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const supabase = useSupabaseBrowser();
 
   // Mode
   const [mode, setMode] = useState<Mode>('market');

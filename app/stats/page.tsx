@@ -9,9 +9,8 @@ import CategoryBadge from '@/components/CategoryBadge';
 import type { AssetCategory } from '@/types';
 import { ASSET_CATEGORIES } from '@/types';
 import { BarChart2, Users, RefreshCw, Coins, Trophy } from 'lucide-react';
-import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
-
-const supabase = createSupabaseBrowserClient();
+import { fetchWithSupabaseAuth } from '@/lib/supabase';
+import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
 interface UserData {
   id:           string;
@@ -74,6 +73,7 @@ function formatCashQuantity(qty: number, currency: string): string {
 export default function StatsPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const supabase = useSupabaseBrowser();
   const [data, setData]           = useState<StatsData | null>(null);
   const [fetchLoading, setFetchLoading] = useState(true);
 

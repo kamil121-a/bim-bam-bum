@@ -8,8 +8,9 @@ import {
   useCallback,
   ReactNode,
 } from 'react';
-import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { User, SupabaseClient } from '@supabase/supabase-js';
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
+import { fetchWithSupabaseAuth } from '@/lib/supabase';
 
 interface AuthUser {
   id: string;
@@ -28,265 +29,176 @@ interface AuthContextType {
   ) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  /** Zapisuje nick w `profiles` (PATCH `/api/profile`) i odświeża profil w stanie. */
   updateUsername: (username: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Singleton browser client – one instance per browser tab, never recreated.
-let _supabase: SupabaseClient | null = null;
-function getSupabase() {
-  if (!_supabase) _supabase = createSupabaseBrowserClient();
-  return _supabase;
+function userFromAuth(u: User): AuthUser {
+  const email = u.email ?? '';
+  const meta = u.user_metadata as { username?: string } | undefined;
+  const metaName =
+    typeof meta?.username === 'string' ? meta.username.trim() : '';
+  return {
+    id:       u.id,
+    email,
+    username: metaName || email.split('@')[0] || 'użytkownik',
+  };
 }
 
 async function fetchProfile(
   supabase: SupabaseClient,
   userId: string,
-  fallbackEmail: string,
+  fallback: AuthUser,
 ): Promise<AuthUser> {
   try {
     const { data } = await supabase
       .from('profiles')
       .select('username')
       .eq('id', userId)
-      .abortSignal(AbortSignal.timeout(8_000))
+      .abortSignal(AbortSignal.timeout(6_000))
       .maybeSingle();
 
-    return {
-      id:       userId,
-      email:    fallbackEmail,
-      username: (data?.username as string | null) ?? fallbackEmail.split('@')[0],
-    };
+    const name = (data?.username as string | null)?.trim();
+    if (name) return { ...fallback, username: name };
   } catch {
-    // Timeout sieci / profil niedostępny — aplikacja nadal działa z fallbackiem.
-    return { id: userId, email: fallbackEmail, username: fallbackEmail.split('@')[0] };
+    /* profil opcjonalny */
   }
+  return fallback;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const supabase = getSupabase();
-  const [user,    setUser]    = useState<AuthUser | null>(null);
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
-    try {
-      const res = await Promise.race([
-        supabase.auth.getUser(),
-        new Promise<Awaited<ReturnType<typeof supabase.auth.getUser>>>((_, reject) =>
-          setTimeout(() => reject(new Error('refresh-timeout')), 15_000),
-        ),
-      ]);
-      const { data: { user: u }, error } = res;
-      if (error || !u) {
+  const applySession = useCallback(
+    async (client: SupabaseClient, authUser: User | null, skipProfile = false) => {
+      if (!authUser) {
         setUser(null);
         return;
       }
-      setUser(await fetchProfile(supabase, u.id, u.email!));
-    } catch (e) {
-      if (e instanceof Error && e.message === 'refresh-timeout') {
-        console.warn('[auth] refresh: getUser timeout');
-        return;
+      const base = userFromAuth(authUser);
+      setUser(base);
+      if (!skipProfile) {
+        setUser(await fetchProfile(client, authUser.id, base));
       }
-      console.warn('[auth] refresh error:', e);
-      setUser(null);
-    }
-  }, [supabase]);
+    },
+    [],
+  );
 
   useEffect(() => {
+    const client = createSupabaseBrowserClient();
+    setSupabase(client);
+
     let mounted = true;
 
-    /**
-     * Session guard strategy (two-step, non-blocking)
-     * ─────────────────────────────────────────────────
-     * Step A  init() – FAST PATH via getSession() (odczyt z ciasteczek sesji, bez sieci)
-     *   • Token found & not expired → show user instantly, unblock UI.
-     *   • No token / expired        → show login page instantly.
-     *   Background: getUser() validates the token with the Supabase server.
-     *     If invalid → silent signOut, clear user state.
-     *
-     * This eliminates the "page hangs until browser history is cleared" bug
-     * caused by getUser() making a slow/hung network request on every page load.
-     *
-     * Step B  onAuthStateChange – handles real-time transitions AFTER init.
-     *   • INITIAL_SESSION is SKIPPED (init already handled it).
-     *   • TOKEN_REFRESH_FAILED → emergency signOut + clear state.
-     *   • SIGNED_IN / TOKEN_REFRESHED / SIGNED_OUT → normal state update.
-     */
-    const init = async () => {
-      try {
-        // ── Fast path: odczyt sesji z ciasteczek (chunki @supabase/ssr) ───────────
-        // getSession() is normally instant (reads localStorage) but CAN make a
-        // network request if the token is expired and needs refreshing.
-        // Promise.race with a 4-second timeout ensures we never hang.
-        const sessionResult = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise<{ data: { session: null } }>((resolve) =>
-            setTimeout(() => resolve({ data: { session: null } }), 4_000),
-          ),
-        ]);
-
-        if (!mounted) return;
-
-        const session = sessionResult.data.session;
-
-        if (!session?.user) {
-          // No session stored (or timed out) → show login immediately
-          setUser(null);
-          setLoading(false);
-          return;
-        }
-
-        // Session found → show user from cache, unblock UI right away
-        const cachedUser: AuthUser = {
-          id:       session.user.id,
-          email:    session.user.email!,
-          username: session.user.email!.split('@')[0],  // placeholder until profile loads
-        };
-        setUser(cachedUser);
-        setLoading(false);  // ← UI unblocked instantly
-
-        // ── Background: validate token with server + load real profile ────────
-        const BG_MS = 12_000;
-        Promise.race([
-          supabase.auth.getUser().then((r) => ({ kind: 'result' as const, r })),
-          new Promise<{ kind: 'timeout' }>((resolve) =>
-            setTimeout(() => resolve({ kind: 'timeout' }), BG_MS),
-          ),
-        ])
-          .then(async (wrapped) => {
-            if (!mounted) return;
-            if (wrapped.kind === 'timeout') {
-              console.warn('[auth] background getUser timeout — signing out (likely stale session)');
-              await supabase.auth.signOut().catch(() => {});
-              if (mounted) setUser(null);
-              return;
-            }
-            const { data: { user: serverUser }, error } = wrapped.r;
-            if (error || !serverUser) {
-              console.warn('[auth] background token validation failed – signing out:', error?.message);
-              await supabase.auth.signOut().catch(() => {});
-              if (mounted) setUser(null);
-              return;
-            }
-            const profile = await fetchProfile(supabase, serverUser.id, serverUser.email!);
-            if (mounted) setUser(profile);
-          })
-          .catch((err) => {
-            console.warn('[auth] background getUser() error:', err instanceof Error ? err.message : err);
-          });
-
-      } catch (err) {
-        console.error('[auth] init() error:', err);
-        if (mounted) {
-          setUser(null);
-          setLoading(false);
-        }
-      }
+    const finishBoot = () => {
+      if (mounted) setLoading(false);
     };
 
-    init();
+    const bootCap = window.setTimeout(finishBoot, 1_500);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted) return;
+    void client.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      if (session?.user) {
+        void applySession(client, session.user, true).finally(() => {
+          window.clearTimeout(bootCap);
+          finishBoot();
+        });
+      } else {
+        setUser(null);
+        window.clearTimeout(bootCap);
+        finishBoot();
+      }
+    });
 
-        // INITIAL_SESSION is handled by init() above.
-        // Processing it here would create a race condition.
-        if (event === 'INITIAL_SESSION') return;
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
 
-        // Token refresh failed → the stored refresh token is invalid.
-        // signOut() erases all localStorage / cookie auth data so the user
-        // is presented with a clean login form instead of an infinite loop.
-        if ((event as string) === 'TOKEN_REFRESH_FAILED') {
-          console.warn('[auth] TOKEN_REFRESH_FAILED – signing out to clear state');
-          await supabase.auth.signOut().catch(() => {});
-          if (mounted) { setUser(null); setLoading(false); }
-          return;
-        }
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        finishBoot();
+        return;
+      }
 
-        if (session?.user) {
-          // Nie ustawiamy loading=true przy SIGNED_IN — login() już wypełnia user przed nawigacją;
-          // loading=true tutaj blokował dashboard (loading || !user) na czas drugiego fetchProfile.
-          try {
-            const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
-            if (mounted) setUser(profile);
-          } finally {
-            if (mounted) setLoading(false);
+      if ((event as string) === 'TOKEN_REFRESH_FAILED') {
+        void client.auth.signOut().finally(() => {
+          if (mounted) {
+            setUser(null);
+            finishBoot();
           }
-        } else {
-          if (mounted) { setUser(null); setLoading(false); }
-        }
-      },
-    );
+        });
+        return;
+      }
+
+      if (session?.user) {
+        const fullProfile = event === 'SIGNED_IN';
+        void applySession(client, session.user, !fullProfile).finally(finishBoot);
+      }
+    });
 
     return () => {
       mounted = false;
+      window.clearTimeout(bootCap);
       subscription.unsubscribe();
     };
-  }, [supabase]);
-
-  /**
-   * Jeśli init/auth utknie (np. sieć, zepsuta sesja), nie zostawiaj użytkownika na wiecznym spinnerze.
-   */
-  useEffect(() => {
-    if (!loading) return;
-    const id = window.setTimeout(() => {
-      console.warn('[auth] watchdog: loading > 20s — clearing session');
-      void supabase.auth.signOut().finally(() => {
-        setUser(null);
-        setLoading(false);
-      });
-    }, 20_000);
-    return () => clearTimeout(id);
-  }, [loading, supabase]);
+  }, [applySession]);
 
   const login = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (!supabase) return { error: 'Aplikacja się ładuje, spróbuj za chwilę.' };
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: translateAuthError(error.message) };
 
-    // Natychmiastowa sesja + profil w stanie — zanim zadziała router, dashboard musi widzieć user
-    // (inaczej: !user && !loading → redirect na /login lub wieczny spinner).
-    const sessionResult = await Promise.race([
-      supabase.auth.getSession(),
-      new Promise<{ data: { session: null } }>((resolve) =>
-        setTimeout(() => resolve({ data: { session: null } }), 12_000),
-      ),
-    ]);
-
-    const session = sessionResult.data.session;
-    if (!session?.user) {
-      return {
-        error:
-          'Nie udało się nawiązać sesji (timeout lub brak danych). Sprawdź połączenie i spróbuj ponownie.',
-      };
+    const authUser = data.session?.user ?? data.user;
+    if (!authUser) {
+      return { error: 'Logowanie powiodło się, ale nie otrzymano sesji. Spróbuj ponownie.' };
     }
 
-    const profile = await fetchProfile(supabase, session.user.id, session.user.email!);
-    setUser(profile);
+    await applySession(supabase, authUser);
+    setLoading(false);
     return {};
   };
 
   const register = async (username: string, email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({
+    if (!supabase) return { error: 'Aplikacja się ładuje, spróbuj za chwilę.' };
+
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { username } },
     });
     if (error) return { error: translateAuthError(error.message) };
+
+    const authUser = data.session?.user ?? data.user;
+    if (authUser) {
+      await applySession(supabase, authUser);
+      setLoading(false);
+    }
     return {};
   };
 
   const logout = async () => {
+    if (!supabase) return;
     await supabase.auth.signOut();
     setUser(null);
+    setLoading(false);
   };
+
+  const refresh = useCallback(async () => {
+    if (!supabase) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    await applySession(supabase, session?.user ?? null);
+  }, [supabase, applySession]);
 
   const updateUsername = useCallback(
     async (username: string) => {
+      if (!supabase) return;
       const res = await fetchWithSupabaseAuth(supabase, '/api/profile', {
-        method: 'PATCH',
+        method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ username }),
       });

@@ -15,9 +15,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
-
-const supabase = createSupabaseBrowserClient();
+import { fetchWithSupabaseAuth } from '@/lib/supabase';
+import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
 const FINANCE_CATS: AssetCategory[] = ['Akcje', 'Kruszce', 'Gotówka', 'Finanse'];
 const OTHER_CATS:   AssetCategory[] = ['Nieruchomości', 'Pojazdy', 'Elektronika', 'Biżuteria', 'Przedmioty kolekcjonerskie', 'Inne'];
@@ -35,6 +34,7 @@ function AssetSkeleton() {
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const supabase = useSupabaseBrowser();
 
   const [assets,       setAssets]       = useState<Asset[]>([]);
   const [fetchLoading, setFetchLoading] = useState(true);
@@ -202,7 +202,7 @@ export default function DashboardPage() {
   const hasMarket = assets.some(a => MARKET_CATS.has(a.category));
   const hasOther  = assets.some(a => !FINANCE_CATEGORIES.has(a.category));
 
-  if (loading || !user) {
+  if (loading) {
     return (
       <>
         <Navigation />
@@ -211,6 +211,10 @@ export default function DashboardPage() {
         </div>
       </>
     );
+  }
+
+  if (!user) {
+    return null;
   }
 
   return (

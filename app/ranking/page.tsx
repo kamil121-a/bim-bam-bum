@@ -7,9 +7,8 @@ import Navigation from '@/components/Navigation';
 import { formatPLN } from '@/components/AssetCard';
 import type { RankingEntry } from '@/types';
 import { Trophy, Crown, RefreshCw, Zap } from 'lucide-react';
-import { createSupabaseBrowserClient, fetchWithSupabaseAuth } from '@/lib/supabase';
-
-const supabase = createSupabaseBrowserClient();
+import { fetchWithSupabaseAuth } from '@/lib/supabase';
+import { useSupabaseBrowser } from '@/lib/use-supabase-browser';
 
 const MEDAL: Record<number, { icon: string; color: string; bg: string }> = {
   0: { icon: '🥇', color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
@@ -20,6 +19,7 @@ const MEDAL: Record<number, { icon: string; color: string; bg: string }> = {
 export default function RankingPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const supabase = useSupabaseBrowser();
   const [ranking, setRanking]         = useState<RankingEntry[]>([]);
   const [currentUserId, setCurrentUserId] = useState('');
   const [fetchLoading, setFetchLoading]   = useState(true);
