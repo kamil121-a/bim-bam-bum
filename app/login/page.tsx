@@ -2,12 +2,21 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { isProtectedPath } from '@/lib/supabase-auth-config';
 import { Wallet, Eye, EyeOff, LogIn } from 'lucide-react';
+
+function redirectAfterAuth(next: string | null): string {
+  if (next && next.startsWith('/') && !next.startsWith('//') && isProtectedPath(next)) {
+    return next;
+  }
+  return '/dashboard';
+}
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading, login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,8 +25,10 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && user) router.replace('/dashboard');
-  }, [user, loading, router]);
+    if (!loading && user) {
+      router.replace(redirectAfterAuth(searchParams.get('next')));
+    }
+  }, [user, loading, router, searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,8 +38,10 @@ export default function LoginPage() {
       const result = await login(email, password);
       if (result.error) {
         setError(result.error);
+      } else {
+        router.refresh();
+        router.replace(redirectAfterAuth(searchParams.get('next')));
       }
-      // Nawigacja na /dashboard: istniejący useEffect (!loading && user), gdy login() ustawi user
     } finally {
       setSubmitting(false);
     }
